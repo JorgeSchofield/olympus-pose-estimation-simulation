@@ -5,7 +5,15 @@ function [ds, dth, moving, spread] = sep_odometry(enc_delta, geo)
 %
 %   Entradas:
 %     enc_delta : 6x1, incremento de cuentas desde el paso anterior,
-%                 orden FR FL CR CL RR RL, CON SIGNO (cuadratura x2).
+%                 orden FR FL CR CL RR RL, tal como llegan del LLC.
+%
+%                 CONVENCION DE SIGNO. Los motores del lado derecho estan
+%                 montados en espejo: al avanzar, las ruedas izquierdas
+%                 cuentan POSITIVO y las derechas NEGATIVO. Esta funcion no
+%                 corrige el signo aqui, porque geo.m_per_tick ya lo lleva
+%                 incorporado (ver sep_geo_params). Pasar cuentas ya
+%                 rectificadas produciria un doble cambio de signo y un
+%                 avance recto se leeria como giro puro.
 %     geo       : struct de sep_geo_params().
 %
 %   Salidas:

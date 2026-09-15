@@ -44,12 +44,10 @@ p.status       = struct();
 p.geo = sep_geo_params();
 p.ekf = sep_ekf_params();
 
-p.status.R_wheel         = 'TBD';    % Anexo B.2.4 - config.rs WHEEL_RADIUS_MM (TBD)
-p.status.decode_mode     = 'MED';    % verificado en main.rs (EICRA any-edge)
-p.status.ppr_motor       = 'TBD';    % no documentado
-p.status.gear_ratio      = 'TBD';    % inferido del nombre del motor
-p.status.ticks_per_rev   = 'DER';    % pasa a MED cuando B.2.1 lo mida
-p.status.B_nom           = 'TBD';    % Anexo B.2.5 - config.rs WHEEL_BASE_MM (TBD)
+p.status.R_wheel         = 'MED';    % campana 14/09/2026, calibrador
+p.status.ticks_per_rev   = 'MED';    % campana 14/09/2026, una vuelta a 3 velocidades
+p.status.enc_sign        = 'MED';    % derechas negativas al avanzar (montaje en espejo)
+p.status.B_nom           = 'MED';    % campana 14/09/2026, cinta metrica
 p.status.chi             = 'TBD';    % Anexo B.2.6
 p.status.B_eff           = 'DER';
 p.status.k_rho           = 'PROV';
@@ -73,8 +71,8 @@ p.drive.v_max        = 0.029;   % [m/s] velocidad en suelo al 100 % PWM
 p.status.pwm_deadband= 'PROV';
 p.status.pwm_lin_lo  = 'PROV';
 p.status.pwm_lin_hi  = 'PROV';
-p.status.ticks_max   = 'PROV';  % INCONSISTENTE con v_max: ver verificacion
-p.status.v_max       = 'PROV';  % INCONSISTENTE con ticks_max
+p.status.ticks_max   = 'PROV';  % de la campana TRL-4, sin reconfirmar
+p.status.v_max       = 'PROV';  % de la campana TRL-4; falta medir en suelo (M4)
 
 % Hipotesis de trabajo sobre la velocidad, mientras el Anexo B no cierre.
 %   'A' = usar v_max tal cual (0.029 m/s)
@@ -118,6 +116,7 @@ p.sim.w_turn     = 0.35;        % [rad/s] velocidad de giro en el sitio
 p.sim.pause_s    = 2.0;         % [s] pausa inicial y final (habilita ZARU)
 p.sim.slip_prob  = 0.01;        % [-] probabilidad de evento de patinaje por paso
 p.sim.slip_frac  = 0.50;        % [-] fraccion de avance perdida al patinar
+p.sim.disp_R     = 0.005;       % [-] dispersion relativa de radios (medida: <1 %)
 p.sim.chi_true   = 1.20;        % [-] chi VERDADERO de la planta
 p.sim.seed       = 20260823;
 
@@ -142,32 +141,57 @@ c.ok = true;
 fprintf('\n=== rover_params: verificacion de consistencia ===\n');
 
 % --- 1. Coherencia cinematica -------------------------------------------
-% ticks_max, ticks_per_rev, R_wheel y v_max no son independientes.
+% ticks_max, ticks_per_rev, R_wheel y v_max no son independientes. Tras la
+% campana de caracterizacion, ticks_per_rev es un VECTOR (una cifra por
+% rueda), de modo que el contraste se hace sobre el promedio.
 R_mean   = mean(p.geo.R_wheel);
-rev_s    = p.drive.ticks_max / p.geo.ticks_per_rev;
-v_implic = rev_s * 2*pi*R_mean;
+N_mean   = mean(p.geo.ticks_per_rev);
+rev_s    = p.drive.ticks_max / N_mean;
+v_implic = rev_s * 2*pi*R_mean;            % velocidad en vacio, rueda elevada
 c.v_implicada = v_implic;
 c.ratio       = v_implic / p.drive.v_max;
 
-fprintf('  ticks/vuelta de rueda ......... %.1f (%s)\n', ...
-        p.geo.ticks_per_rev, p.status.ticks_per_rev);
-fprintf('  v implicada por los encoders .. %.4f m/s\n', v_implic);
+fprintf('  cuentas/vuelta (media) ........ %.0f (%s)\n', N_mean, p.status.ticks_per_rev);
+fprintf('  dispersion entre ruedas ....... %.1f %%\n', ...
+        (max(p.geo.ticks_per_rev)-min(p.geo.ticks_per_rev))/N_mean*100);
+fprintf('  v implicada en vacio .......... %.4f m/s\n', v_implic);
 fprintf('  v medida en suelo ............. %.4f m/s\n', p.drive.v_max);
-fprintf('  discrepancia .................. x%.1f\n', c.ratio);
+fprintf('  razon vacio/suelo ............. x%.1f\n', c.ratio);
 
-if c.ratio > 1.5 || c.ratio < 0.67
+% La velocidad en vacio es NECESARIAMENTE mayor que la de suelo: bajo carga
+% el motor cae de velocidad y hay deslizamiento. Una razon de 1 a 4 es
+% esperable; fuera de ese rango hay algo mal.
+if c.ratio < 1.0
     c.ok = false;
-    warning('rover_params:cinematicaInconsistente', ...
-       ['La velocidad implicada por la tasa de encoder difiere de la medida ' ...
-        'en un factor de %.1f. Una de las dos medidas es incorrecta, o hay ' ...
-        'conteo espurio. Ejecutar DRT-SEP-001 Anexo B.2.1-B.2.3 antes de ' ...
-        'usar este modelo como referencia.'], c.ratio);
+    warning('rover_params:velocidadIncoherente', ...
+       ['La velocidad medida en suelo (%.3f m/s) supera a la implicada por ' ...
+        'los encoders en vacio (%.3f m/s), lo que es fisicamente imposible. ' ...
+        'Revisar ticks_max o v_max.'], p.drive.v_max, v_implic);
+elseif c.ratio > 4.0
+    c.ok = false;
+    warning('rover_params:perdidaExcesiva', ...
+       ['La velocidad en suelo es %.1f veces menor que la de vacio. Una ' ...
+        'perdida tan grande sugiere deslizamiento severo o que ticks_max ' ...
+        'no corresponde a la misma condicion de ensayo. Ejecutar M4.'], c.ratio);
+end
+
+% Dispersion entre ruedas: es el error sistematico Ed y no tiene
+% explicacion geometrica si los diametros son iguales.
+disp_N = (max(p.geo.ticks_per_rev)-min(p.geo.ticks_per_rev))/N_mean;
+if disp_N > 0.05
+    fprintf(['  AVISO: %.1f %% de dispersion en cuentas/vuelta entre ruedas.\n' ...
+             '         Las cuentas por vuelta dependen del encoder y de la\n' ...
+             '         reduccion, NO del diametro de la rueda, asi que esta\n' ...
+             '         dispersion no tiene explicacion geometrica. Causas\n' ...
+             '         posibles: error al juzgar "una vuelta" (repetir con\n' ...
+             '         10 vueltas), reducciones distintas entre motores, o\n' ...
+             '         deslizamiento de la llanta sobre el cubo.\n'], disp_N*100);
 end
 
 % --- 2. Coherencia del piso de cuantizacion ------------------------------
 % s2_ds_floor vive en sep_ekf_params por la frontera de codegen, pero se
 % deriva de la geometria. Si se recalibra ticks_per_rev hay que actualizarlo.
-mpt_esperado = mean(p.geo.m_per_tick);
+mpt_esperado = mean(abs(p.geo.m_per_tick));   % abs: lleva signo por lado
 floor_esper  = mpt_esperado^2 / 12;
 c.floor_ratio = p.ekf.s2_ds_floor / floor_esper;
 if c.floor_ratio > 1.2 || c.floor_ratio < 0.8
@@ -180,7 +204,7 @@ end
 
 % --- 3. Cuantizacion por muestra -----------------------------------------
 v_cruise   = 0.5 * p.drive.v_max;
-ticks_samp = (v_cruise / (2*pi*R_mean)) * p.geo.ticks_per_rev * p.time.T_llc;
+ticks_samp = (v_cruise / (2*pi*R_mean)) * N_mean * p.time.T_llc;
 c.ticks_per_sample = ticks_samp;
 fprintf('  ticks por muestra a media velocidad ... %.2f\n', ticks_samp);
 if ticks_samp < 5

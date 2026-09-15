@@ -207,9 +207,11 @@ function [TRU, enc_counts, wz, dist, gps] = simulate_truth(seg, p, Ts, v_nom)
 %  comporta un encoder fisico. Cuantizar cada incremento por separado
 %  introduciria un sesgo determinista de redondeo.
 
-    geo_t.R_wheel = p.geo.R_wheel .* (1 + 0.01*randn(1,6));   % dispersion -> Ed
-    geo_t.B_eff   = p.sim.chi_true * p.geo.B_nom;             % ancho real -> Eb
-    mpt_true      = 2*pi*geo_t.R_wheel / p.geo.ticks_per_rev;
+    geo_t.R_wheel = p.geo.R_wheel .* (1 + p.sim.disp_R*randn(1,6)); % dispersion -> Ed
+    geo_t.B_eff   = p.sim.chi_true * p.geo.B_nom;                   % ancho real -> Eb
+    % Cuentas por vuelta POR RUEDA y signo por lado: los motores derechos
+    % estan montados en espejo y cuentan negativo al avanzar.
+    mpt_true      = p.geo.enc_sign .* (2*pi*geo_t.R_wheel ./ p.geo.ticks_per_rev);
 
     px = 0; py = 0; th = 0; dist = 0;
     arc   = zeros(1,6);
@@ -254,7 +256,9 @@ function [TRU, enc_counts, wz, dist, gps] = simulate_truth(seg, p, Ts, v_nom)
             aR = ds_cmd + 0.5*dth_cmd*geo_t.B_eff;
             aL = ds_cmd - 0.5*dth_cmd*geo_t.B_eff;
             arc = arc + [aR aL aR aL aR aL];       % FR FL CR CL RR RL
-            cnt = floor(arc ./ mpt_true);
+            % fix() y no floor(): con m_per_tick negativo en el lado derecho
+            % floor() truncaria hacia -inf y sesgaria ese lado.
+            cnt = fix(arc ./ mpt_true);
             ENC(k,:) = cnt; %#ok<AGROW>
 
             % --- giroscopio ---

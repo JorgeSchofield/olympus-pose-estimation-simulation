@@ -210,6 +210,35 @@ pruebas.
 
 ---
 
+## 5.1 Campaña de caracterización (14/09/2026)
+
+Los parámetros geométricos dejaron de ser provisionales. Resultados principales:
+
+| Parámetro | Valor anterior | Medido |
+|---|---|---|
+| Cuentas por vuelta de rueda | 682 (derivado) | 42 660 – 54 159 según rueda |
+| Radio de rueda | 50 mm (provisional) | 53,0 – 53,5 mm |
+| Ancho de vía | 280 mm (provisional) | 622 mm (media de tres ejes) |
+| Resolución lineal | 4,6·10⁻⁴ m/cuenta | ≈ 7,3·10⁻⁶ m/cuenta |
+
+Tres consecuencias:
+
+**La anomalía del factor 178,8 queda explicada.** Con las cuentas por vuelta correctas, la
+velocidad implicada en vacío es de 8,1 cm/s frente a los 2,9 cm/s medidos en suelo: una
+razón de 2,8, atribuible a carga y deslizamiento.
+
+**El conteo espurio queda descartado.** Las cuentas por vuelta varían un 0,5 % entre el
+20 % y el 80 % de PWM. Si hubiera interferencia de los puentes H, escalarían con la
+corriente de conmutación.
+
+**La cuantización deja de ser una preocupación.** A media velocidad caen unas 40 cuentas por
+intervalo de muestreo, frente a las 0,63 que predecían los valores provisionales.
+
+Queda abierta una dispersión del 24,8 % en cuentas por vuelta entre ruedas, que no tiene
+explicación geométrica y debe resolverse repitiendo la medición sobre diez vueltas.
+
+---
+
 ## 6. Pendiente
 
 - Reproducir estos números ejecutando `run_sep_demo` en MATLAB.

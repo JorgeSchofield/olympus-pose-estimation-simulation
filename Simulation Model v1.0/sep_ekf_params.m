@@ -19,7 +19,10 @@ function prm = sep_ekf_params()
     % Piso de ruido de ds por cuantizacion del encoder: m_per_tick^2/12.
     % DERIVADO de la geometria; rover_params.m verifica que siga siendo
     % coherente con sep_geo_params y avisa si divergen tras calibrar.
-    prm.s2_ds_floor = (4.606e-4)^2 / 12.0;  % [m^2] DER
+    prm.s2_ds_floor = (7.27e-6)^2 / 12.0;   % [m^2] DER
+    % Actualizado tras la campana de caracterizacion: la resolucion pasa de
+    % 4.6e-4 m/cuenta (valor provisional) a ~7.3e-6 m/cuenta medidos. El
+    % piso de ruido de cuantizacion cae por un factor de 4000.
 
     % Ruido de integracion del rumbo por paso.
     prm.s2_theta = (0.5*pi/180)^2 * 0.020;  % [rad^2] PROV
