@@ -22,12 +22,14 @@ function [st, buf, n, arrived] = channel_step(st, in_buf, in_n, in_emit, u, ch, 
 %                 es un numero PLAUSIBLE que ningun parser detecta. Es el
 %                 riesgo que esta ruta no cubre.
 %
-%   La cola es de profundidad fija 4: el LLC emite como mucho una trama por
-%   ciclo y el retardo de cable es menor que un ciclo, asi que nunca hay
-%   mas de una o dos en vuelo. Si se saturara, se descarta la mas vieja y
-%   se cuenta como perdida, que es lo que haria un buffer real.
+%   La profundidad de la cola es ch.max_inflight, fijada en channel_init.
+%   El LLC emite como mucho una trama por ciclo y el retardo de cable es
+%   menor que un ciclo, asi que en condiciones normales nunca hay mas de
+%   una o dos en vuelo. Si se saturara se descarta y se cuenta como
+%   perdida, que es lo que haria un buffer real.
 %#codegen
 
+    uu = u(:).';        % fila: Simulink entrega columna
     N = raw_buf_max();
     buf = zeros(1, N, 'uint8');
     n   = 0;
@@ -35,15 +37,15 @@ function [st, buf, n, arrived] = channel_step(st, in_buf, in_n, in_emit, u, ch, 
 
     % --- admision de una trama nueva ------------------------------------
     if in_emit
-        if u(1) < ch.p_loss
+        if uu(1) < ch.p_loss
             st.n_lost = st.n_lost + 1;
         else
             b = in_buf;
-            if u(2) < ch.p_corrupt
-                b = flip_digit(b, in_n, u(3));
+            if uu(2) < ch.p_corrupt
+                b = flip_digit(b, in_n, uu(3));
             end
             slot = 0;
-            for i = 1:4
+            for i = 1:numel(st.busy)
                 if st.busy(i) == 0, slot = i; break; end
             end
             if slot == 0
@@ -62,7 +64,7 @@ function [st, buf, n, arrived] = channel_step(st, in_buf, in_n, in_emit, u, ch, 
     end
 
     % --- avance de las tramas en vuelo -----------------------------------
-    for i = 1:4
+    for i = 1:numel(st.busy)
         if st.busy(i) == 1
             st.rem(i) = st.rem(i) - Tb;
             if st.rem(i) <= 0 && ~arrived

@@ -59,11 +59,16 @@ function [st, buf, n, emit] = llc_step(st, w_true, a_body, pitch, roll, arc, ...
         tx = 0;
         if llc.emit_raw,                                tx = tx + llc.raw_bytes; end
         if llc.emit_tlm && mod(st.k, llc.TLM_PERIOD)==0, tx = tx + llc.tlm_bytes; end
-        if strcmpi(llc.tx_mode, 'blocking')
+        % Banderas NUMERICAS, no comparacion de cadenas. Comparar texto dentro de un
+        % bloque MATLAB Function obliga a arrastrar campos de tipo char en
+        % el struct de parametros, que codegen trata como arreglos de
+        % tamano variable. llc_params deriva sw_clock y tx_block de
+        % clock_mode y tx_mode para eso; editar SIEMPRE las cadenas.
+        if llc.tx_block > 0.5
             work = work + tx*llc.byte_s;
         end
 
-        if strcmpi(llc.clock_mode, 'software')
+        if llc.sw_clock > 0.5
             % delay_ms es un hueco: periodo = trabajo + LOOP_MS
             cyc = work + llc.LOOP_MS*1e-3;
         else
@@ -78,18 +83,28 @@ function [st, buf, n, emit] = llc_step(st, w_true, a_body, pitch, roll, arc, ...
 
     st.phase = st.phase + 1;
 
+    % --- filtro digital del giroscopio (DLPF del MPU-9250) --------------
+    % Se filtra CADA paso base, no solo al leer: el DLPF vive dentro del
+    % sensor y corre a su propia tasa interna, muy por encima del ciclo del
+    % LLC. Modelarlo como un polo simple a llc.dlpf_bw reproduce a la vez
+    % el retardo de grupo y el antialiasing, que es lo que hace que la
+    % eleccion de DLPF_CFG tenga consecuencias medibles en el modelo.
+    % Antes llc.dlpf_delay estaba definido y no lo leia nadie.
+    a_lp = 1 - exp(-2*pi*max(llc.dlpf_bw,1)*Tb);
+    st.gyro_lp = st.gyro_lp + a_lp*(w_true*cos(pitch) - st.gyro_lp);
+
     % --- lectura de la IMU ---------------------------------------------
     % Ocurre en un punto del ciclo; los encoders en otro. La trama los
     % transporta como si fueran simultaneos y el HLC no puede saberlo.
     if st.phase == st.p_imu
-        [st.lat_gyr, st.lat_acc] = imu_read(w_true, a_body, pitch, roll, ...
+        [st.lat_gyr, st.lat_acc] = imu_read(st.gyro_lp, a_body, pitch, roll, ...
                                             noise, llc, imu, st.t_real);
         st.t_imu = st.t_real;
     end
 
     % --- lectura de los encoders ----------------------------------------
     if st.phase == st.p_enc
-        st.lat_cnt = arc_to_counts(arc, geo);
+        st.lat_cnt = arc_to_counts(arc(:).', geo);   % fila, venga como venga
         st.t_enc   = st.t_real;
 
         % Deteccion de stall (main.rs paso 3)
@@ -112,7 +127,7 @@ function [st, buf, n, emit] = llc_step(st, w_true, a_body, pitch, roll, arc, ...
         [buf, n] = raw_frame_bytes(st.clock_ms, st.lat_acc, st.lat_gyr, encL, encR);
         emit = true;
 
-        if strcmpi(llc.clock_mode, 'software')
+        if llc.sw_clock > 0.5
             st.clock_ms = mod(st.clock_ms + llc.LOOP_MS, 2^32);
         else
             st.clock_ms = mod((st.t_real + st.len*Tb)*1000 / ...
@@ -145,7 +160,7 @@ function cnt = arc_to_counts(arc, geo)
 end
 
 % =====================================================================
-function [gyr, acc] = imu_read(w_body, a_body, pitch, roll, noise, llc, imu, t)
+function [gyr, acc] = imu_read(w_body, a_body, pitch, roll, noise_in, llc, imu, t)
 %IMU_READ  Verdad -> lecturas crudas int16 del MPU-9250.
 %
 %   El acelerometro mide FUERZA ESPECIFICA, no aceleracion: en reposo y
@@ -162,24 +177,27 @@ function [gyr, acc] = imu_read(w_body, a_body, pitch, roll, noise, llc, imu, t)
 %   vuelve a ser una metrica con sentido. Dos implementaciones que
 %   coinciden son evidencia; una sola es solo codigo.
 %#codegen
-    g = 9.80665;
+    g  = 9.80665;
+    nz = noise_in(:).';    % fila: Simulink entrega columna, el bucle fila
+    ab = a_body(:).';
 
-    wz   = w_body * cos(pitch);
+    % w_body llega YA filtrado por el DLPF y ya proyectado con cos(pitch).
+    wz   = w_body;
     bias = imu.gyro_bias_z + imu.gyro_bias_drift * t;
     sg   = deg2rad(imu.gyro_arw) * sqrt(max(llc.dlpf_bw,1));
-    wz_m = wz*(1 + imu.gyro_sf_err) + bias + sg*noise(1);
+    wz_m = wz*(1 + imu.gyro_sf_err) + bias + sg*nz(1);
 
-    gyr = [sat(round(noise(2)*llc.gyro_lsb*0.01), llc.i16_max), ...
-           sat(round(noise(3)*llc.gyro_lsb*0.01), llc.i16_max), ...
+    gyr = [sat(round(nz(2)*llc.gyro_lsb*0.01), llc.i16_max), ...
+           sat(round(nz(3)*llc.gyro_lsb*0.01), llc.i16_max), ...
            sat(round(rad2deg(wz_m)*llc.gyro_lsb), llc.i16_max)];
 
-    ax = a_body(1) + g*sin(pitch);
-    ay = a_body(2) - g*sin(roll)*cos(pitch);
+    ax = ab(1) + g*sin(pitch);
+    ay = ab(2) - g*sin(roll)*cos(pitch);
     az =             g*cos(pitch)*cos(roll);
 
     sa = imu.accel_nd * sqrt(max(llc.dlpf_bw,1));
-    acc = [sat(round((ax + sa*noise(4))/g * llc.accel_lsb), llc.i16_max), ...
-           sat(round((ay + sa*noise(5))/g * llc.accel_lsb), llc.i16_max), ...
+    acc = [sat(round((ax + sa*nz(4))/g * llc.accel_lsb), llc.i16_max), ...
+           sat(round((ay + sa*nz(5))/g * llc.accel_lsb), llc.i16_max), ...
            sat(round( az               /g * llc.accel_lsb), llc.i16_max)];
 end
 

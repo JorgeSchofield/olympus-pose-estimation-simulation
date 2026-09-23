@@ -55,14 +55,25 @@ function llc = llc_params()
     llc.STALL_THRESH= 50;          % config.rs: STALL_THRESHOLD
 
     % ---- modos --------------------------------------------------------
-    llc.clock_mode = 'software';   % 'software' (real hoy) | 'timer'
-    llc.tx_mode    = 'blocking';   % 'blocking'  (real hoy) | 'interrupt'
+    % Igual que baud: primero locales, el struct se rellena desde ellas.
+    clock_mode     = 'software';   % 'software' (real hoy) | 'timer'
+    tx_mode        = 'blocking';   % 'blocking'  (real hoy) | 'interrupt'
+    llc.clock_mode = clock_mode;
+    llc.tx_mode    = tx_mode;
     llc.emit_raw   = true;         % trama RAW cada ciclo (ruta a MATLAB)
     llc.emit_tlm   = true;         % TLM cada TLM_PERIOD ciclos
 
     % ---- enlace -------------------------------------------------------
-    llc.baud       = 115200;       % USART0 -> USB. NO son 500 000.
-    llc.byte_s     = 10/llc.baud;  % 8N1: 10 bits por byte
+    % OJO CODEGEN: baud vive primero en una variable LOCAL y el struct se
+    % rellena desde ella. Escribir llc.byte_s = 10/llc.baud LEE el struct y
+    % luego le ANADE un campo, y MATLAB Coder lo rechaza: "Code generation
+    % does not support the addition of new fields after a structure has
+    % been read or used". Un solo campo que infrinja la regla invalida
+    % todos los que vengan detras, y el error aparece en el bloque de
+    % Simulink que llamo a sim_params, muy lejos de la causa.
+    baud           = 115200;       % USART0 -> USB. NO son 500 000.
+    llc.baud       = baud;
+    llc.byte_s     = 10/baud;      % 8N1: 10 bits por byte
     llc.raw_bytes  = 80;           % trama RAW tipica, ASCII
     llc.tlm_bytes  = 185;          % TLM extendida, ASCII
 
@@ -121,6 +132,6 @@ function llc = llc_params()
     % strcmpi: comparar cadenas dentro de un bloque obliga a literales
     % entrecomillados, que se rompen al inyectar el codigo por script.
     % Derivadas, nunca editar a mano: editar clock_mode y tx_mode.
-    llc.sw_clock = double(strcmpi(llc.clock_mode, 'software'));
-    llc.tx_block = double(strcmpi(llc.tx_mode,    'blocking'));
+    llc.sw_clock = double(strcmpi(clock_mode, 'software'));
+    llc.tx_block = double(strcmpi(tx_mode,    'blocking'));
 end

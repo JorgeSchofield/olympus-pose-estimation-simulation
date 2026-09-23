@@ -23,17 +23,28 @@ rng(p.sim.seed);
 Tb = p.sim.Tb;
 
 %% ============ 1. PERFIL DE COMANDO ============
+% UMBmark COMPLETO: el cuadrado se recorre en los DOS sentidos. No es
+% redundancia. Los dos errores sistematicos de Borenstein y Feng se separan
+% justamente por el contraste entre sentidos: el de diametros desiguales
+% (Ed) cambia de signo al invertir el recorrido y el de ancho de via (Eb)
+% no. Con un solo sentido ambos quedan sumados y son indistinguibles.
+%
 % Las pausas NO son cortesia: son lo unico que hace observable el sesgo del
 % giroscopio via ZARU. Un recorrido sin paradas lo deja sin anclar.
 v = p.drive.v_max;  w = p.drive.w_turn;  tp = p.sim.pause_s;
 t_side = p.sim.side/v;  t_turn = (pi/2)/w;
 
+sentidos = {'horario', 'antihorario'};
+signos   = [-1, +1];
+RES = struct('dir',{},'err_pct',{},'dist',{},'her',{},'lat',{},'rate',{});
+
+for run_i = 1:numel(signos)
 seg = [0 0 0];  t = tp;
 for i = 1:4
-    seg(end+1,:) = [t v 0];   t = t + t_side; %#ok<SAGROW>
-    seg(end+1,:) = [t 0 0];   t = t + tp;     %#ok<SAGROW>
-    seg(end+1,:) = [t 0 w];   t = t + t_turn; %#ok<SAGROW>
-    seg(end+1,:) = [t 0 0];   t = t + tp;     %#ok<SAGROW>
+    seg(end+1,:) = [t v 0];              t = t + t_side; %#ok<SAGROW>
+    seg(end+1,:) = [t 0 0];              t = t + tp;     %#ok<SAGROW>
+    seg(end+1,:) = [t 0 signos(run_i)*w]; t = t + t_turn; %#ok<SAGROW>
+    seg(end+1,:) = [t 0 0];              t = t + tp;     %#ok<SAGROW>
 end
 T_end = t;
 N  = round(T_end/Tb);
@@ -70,7 +81,7 @@ chan_log  = [tt uch];              %#ok<NASGU>
 %% ============ 3. BUCLE DE MATLAB (referencia) ============
 stP = plant_init();
 stL = llc_init();
-stC = channel_init();
+stC = channel_init(p.chan);
 stH = hlc_init(p.ekf);
 
 TRU = zeros(N,3);
@@ -87,7 +98,7 @@ for k = 1:N
                                 o.arc, noise(k,:), p.llc, p.geo, p.imu, Tb);
     [stC, cb, cn, ar] = channel_step(stC, b, nb, em, uch(k,:), p.chan, Tb);
     [stH, x, ~, ~, lt, pb] = hlc_step(stH, cb, cn, ar, ...
-                                      p.geo, p.ekf, p.agents, Tb);
+                                      p.geo, p.ekf, p.agents, Tb, uch(k,3));
     XM(k,:) = x.';
     PUB(k)  = pb;
     if pb, LAT(k) = lt; end
@@ -156,6 +167,9 @@ if useSL
 end
 fprintf('=========================================================\n\n');
 
+RES(run_i) = struct('dir', sentidos{run_i}, 'err_pct', err_pct, ...
+    'dist', dist, 'her', rad2deg(herr(end)), 'lat', pct(lat,95), 'rate', rate);
+
 %% ============ 6. GRAFICAS ============
 figure('Color','w','Position',[60 60 1200 760]);
 
@@ -183,8 +197,22 @@ plot(tt, 1000*(stL.clock_ms*0 + tt), 'k:', 'DisplayName','tiempo real');
 title('Reloj del LLC contra tiempo real');
 xlabel('t real [s]'); ylabel('[s]'); legend('Location','best');
 
-sgtitle(sprintf('Rover Olympus completo | LLC %s/%s | Tb = %.1f ms', ...
-        p.llc.clock_mode, p.llc.tx_mode, 1000*Tb));
+sgtitle(sprintf('Rover Olympus completo | LLC %s/%s | Tb = %.1f ms | %s', ...
+        p.llc.clock_mode, p.llc.tx_mode, 1000*Tb, sentidos{run_i}));
+
+end % for run_i
+
+%% ============ 7. RESUMEN UMBmark ============
+fprintf('\n================ RESUMEN UMBmark ================\n');
+for i = 1:numel(RES)
+    fprintf('  %-14s error %6.2f %% de %.2f m ; rumbo %7.2f deg\n', ...
+            RES(i).dir, RES(i).err_pct, RES(i).dist, RES(i).her);
+end
+fprintf(['  El contraste entre sentidos separa Ed (diametros desiguales,\n' ...
+         '  cambia de signo) de Eb (ancho de via, no cambia). Ninguno de\n' ...
+         '  los dos mide la ESCALA de distancia: para eso, el ensayo de\n' ...
+         '  recta.\n']);
+fprintf('=================================================\n');
 
 
 %% ===================== FUNCIONES LOCALES =====================

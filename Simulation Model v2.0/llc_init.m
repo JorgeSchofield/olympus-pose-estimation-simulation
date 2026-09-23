@@ -10,6 +10,7 @@ function st = llc_init()
     st.t_enc    = 0;
     st.p_imu    = 1;
     st.p_enc    = 1;
+    st.gyro_lp  = 0;   % estado del DLPF del giroscopio
     st.lat_gyr  = zeros(1,3);
     st.lat_acc  = zeros(1,3);
     st.lat_cnt  = zeros(1,6);

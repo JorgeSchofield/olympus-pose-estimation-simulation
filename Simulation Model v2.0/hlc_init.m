@@ -5,6 +5,7 @@ function st = hlc_init(prm)
     st.P = diag(prm.P0);
     st.t = 0;
     st.wake = 0;
+    st.u_jit = 0;      % jitter de planificacion, inyectado desde fuera
 
     st.box_full = false;
     st.box_tick = 0;  st.box_encL = 0;  st.box_encR = 0;

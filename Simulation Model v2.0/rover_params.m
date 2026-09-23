@@ -21,7 +21,13 @@ function p = rover_params()
 %     'MED'  medido y verificado
 %     'DER'  derivado de otros parametros (no editar a mano)
 %     'PROV' provisional, de campana previa o de hoja de datos
-%     'TBD'  pendiente de caracterizacion
+%     'TBD'  pendiente de caracterizacion -- es una propiedad del rover que
+%            NO se ha medido, y su ausencia invalida las conclusiones
+%     'SCN'  condicion de ENSAYO, no propiedad del rover. Que perfil de
+%            terreno o que deslizamiento se inyecta es una eleccion del
+%            experimento, no un numero pendiente de medir. Mezclarlo con
+%            TBD infla la cuenta y diluye la senal: el inventario deja de
+%            leerse cuando la mitad de lo que lista no se puede medir.
 %
 %   Los resultados obtenidos con cualquier parametro en 'TBD' NO son
 %   concluyentes para el indicador de exactitud.
@@ -78,8 +84,10 @@ p.status.accel_nd        = 'PROV';
 p.status.dlpf_cfg        = 'TBD';   % decision abierta, ver llc_params
 p.status.half_track      = 'MED';   % campana 14/09/2026 (ext-ext menos 4.5 cm)
 p.status.chi_true        = 'TBD';
-p.status.slip_model      = 'TBD';
-p.status.terrain         = 'TBD';
+p.status.slip_model      = 'SCN';   % que deslizamiento se inyecta es
+                                    % una eleccion del ensayo, no un numero
+                                    % del rover pendiente de medir
+p.status.terrain         = 'SCN';   % idem: perfil de cabeceo y alabeo
 p.status.p_loss          = 'TBD';
 p.status.poll_s          = 'PROV';
 p.status.jitter_s        = 'PROV';
@@ -204,12 +212,31 @@ if c.res_um < 50 || disp_N > 0.05
              N, c.res_um, N/22, 100*disp_N);
 end
 
+% --- 4b. chi: planta contra filtro ---------------------------------------
+% Si chi_true (planta) y geo.chi (filtro) difieren, el rover gira MENOS de
+% lo comandado y el filtro no lo sabe. Con chi_true = 1.20 un giro de 90
+% grados sale de 75, cuatro giros suman 300 y el cuadrado NO CIERRA: la
+% "verdad" se dibuja como un poligono abierto. Es fisica correcta, no un
+% fallo del modelo, pero conviene decirlo o parece que la planta esta rota.
+c.chi_mismatch = p.plant.chi_true / p.geo.chi;
+if abs(c.chi_mismatch - 1) > 0.02
+    fprintf(['  AVISO: chi_true = %.2f y el filtro usa chi = %.2f.\n' ...
+             '         Un giro comandado de 90 deg sale de %.1f deg reales,\n' ...
+             '         cuatro giros suman %.0f deg y el cuadrado no cierra.\n' ...
+             '         Es la descalibracion de ancho de via que el ensayo de\n' ...
+             '         giro de 360 deg resuelve. Para aislar el efecto del\n' ...
+             '         reloj, poner chi = chi_true.\n'], ...
+             p.plant.chi_true, p.geo.chi, 90/c.chi_mismatch, 360/c.chi_mismatch);
+end
+
 % --- 5. Inventario de pendientes -----------------------------------------
 f = fieldnames(p.status);
 v = struct2cell(p.status);
 c.tbd  = f(strcmp(v, 'TBD'));
+c.scn  = f(strcmp(v, 'SCN'));
 c.prov = f(strcmp(v, 'PROV'));
-fprintf('  parametros TBD ................ %d\n', numel(c.tbd));
+fprintf('  parametros TBD (sin medir) .... %d\n', numel(c.tbd));
+fprintf('  condiciones de ensayo (SCN) ... %d\n', numel(c.scn));
 fprintf('  parametros provisionales ...... %d\n', numel(c.prov));
 if ~isempty(c.tbd)
     c.ok = false;

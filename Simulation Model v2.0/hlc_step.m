@@ -1,5 +1,5 @@
 function [st, pose, P, diag_out, lat, publish] = hlc_step(st, buf, n, arrived, ...
-                                                          geo, prm, ag, Tb)
+                                                          geo, prm, ag, Tb, u_jit)
 %HLC_STEP  Un paso base de los cuatro agentes del HLC.
 %
 %   [st, pose, P, diag_out, lat, publish] = HLC_STEP(...)
@@ -33,6 +33,10 @@ function [st, pose, P, diag_out, lat, publish] = hlc_step(st, buf, n, arrived, .
 %   REGLA GENERAL: el paso a incrementos va en el ultimo eslabon, nunca
 %   antes de un buzon que puede sobrescribir.
 %#codegen
+
+    if nargin >= 9
+        st.u_jit = u_jit;      % azar inyectado: mantiene identicas las dos rutas
+    end
 
     pose = st.x;
     P    = st.P;
@@ -79,8 +83,11 @@ function [st, pose, P, diag_out, lat, publish] = hlc_step(st, buf, n, arrived, .
                 % Plausibilidad. La trama ASCII no lleva CRC, de modo que un
                 % byte corrompido da un numero creible: esta es la unica
                 % defensa disponible en esta ruta.
-                if dt > 0 && dt <= prm.dt_max && ...
-                   abs(dCL) < 1e6 && abs(dCR) < 1e6
+                % Umbrales del AGENTE, no del filtro: ag.dt_reject y
+                % ag.dcount_reject estaban definidos y se ignoraban, con
+                % prm.dt_max y un 1e6 escritos a mano en su lugar.
+                if dt > 0 && dt <= ag.dt_reject && ...
+                   abs(dCL) < ag.dcount_reject && abs(dCR) < ag.dcount_reject
                     [ds, dth, moving] = sep_odometry(dCR, dCL, geo);
                     w_gyro = st.box_gz * ag.gyro_scale;
                     [st.x, st.P, xe, dg] = sep_ekf_step(st.x, st.P, ds, dth, ...
@@ -88,7 +95,11 @@ function [st, pose, P, diag_out, lat, publish] = hlc_step(st, buf, n, arrived, .
                     st.n_updates = st.n_updates + 1;
                     pose = xe;  P = st.P;  diag_out = dg;
                     % AGENTE DE COMUNICACION
-                    lat = st.t - st.box_tsam + ag.est_delay + ag.com_delay;
+                    % ag.jitter: los agentes corren sobre pthreads en Linux
+                    % sin RT-preempt, asi que el despertar no es puntual. El
+                    % jitter entra directo en la latencia extremo a extremo.
+                    lat = st.t - st.box_tsam + ag.est_delay + ag.com_delay ...
+                          + ag.jitter*st.u_jit;
                     publish = true;
                 else
                     st.n_implaus = st.n_implaus + 1;

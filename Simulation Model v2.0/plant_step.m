@@ -34,15 +34,24 @@ function [st, out] = plant_step(st, v_cmd, w_cmd, slip6, pitch, roll, dt, pl)
 %   lectura, y eso es exactamente lo que parametriza chi.
 %#codegen
 
-    hy  = pl.half_track;
+    % ORIENTACION DE LOS VECTORES. Se fuerza FILA con (:).' antes de operar.
+    % No es cosmetico. El bucle de MATLAB pasa slip6 como fila (slip(k,:)),
+    % pero Simulink lo entrega como COLUMNA: las senales de un bloque From
+    % Workspace son vectores columna. Una fila .* una columna NO da error:
+    % la expansion implicita produce una matriz 6x6, mean() devuelve 1x6, y
+    % el fallo aparece mucho despues, en ds*cos(thm), como "Incorrect
+    % dimensions for matrix multiplication". MATLAB funciona y Simulink no,
+    % que es el modo de fallo mas caro de diagnosticar.
+    hy  = pl.half_track(:).';
+    s6  = slip6(:).';
     y_w = [-hy(1), +hy(1), -hy(2), +hy(2), -hy(3), +hy(3)];
 
     % --- arco que gira cada rueda (lo que ve el encoder) ---------------
-    v_w = v_cmd - w_cmd*y_w;
+    v_w = v_cmd(1) - w_cmd(1)*y_w;
     a_w = v_w * dt;
 
     % --- avance real sobre el suelo ------------------------------------
-    g_w = a_w .* (1 - slip6);
+    g_w = a_w .* (1 - s6);
 
     % --- del suelo al cuerpo: ajuste de (ds, dth) sobre las seis ruedas
     %     g_i = ds - y_i*dth. Con y_w simetrico el sistema se desacopla.
@@ -54,7 +63,13 @@ function [st, out] = plant_step(st, v_cmd, w_cmd, slip6, pitch, roll, dt, pl)
     % entre lados en vez de convertirla en rotacion.
     dth = dth / pl.chi_true;
 
+    ds  = ds(1);        % escalares explicitos antes de integrar
+    dth = dth(1);
+
     % --- integracion de la verdad (arco de punto medio) ----------------
+    ds  = ds(1);      % blindaje: escalares explicitos antes de integrar
+    dth = dth(1);
+
     thm  = st.th + 0.5*dth;
     st.x = st.x + ds*cos(thm);
     st.y = st.y + ds*sin(thm);

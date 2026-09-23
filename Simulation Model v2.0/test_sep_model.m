@@ -2,6 +2,12 @@ function test_sep_model()
 %TEST_SEP_MODEL  Pruebas unitarias del modelo. Sin toolboxes.
 %   Ejecutar:  >> test_sep_model
     n   = 0;
+
+    % --- 0) contrato de parametros --------------------------------------
+    %   Primero, porque si falta un campo todo lo demas falla de forma
+    %   confusa a mitad de corrida.
+    test_params_contract();
+
     geo = sep_geo_params();
     prm = sep_ekf_params();
     sp  = sim_params();
@@ -101,7 +107,7 @@ function test_sep_model()
     lp = llc_params();  lp.clock_mode = 'timer';
 
     stP = plant_init();  stL = llc_init();
-    stC = channel_init(); stH = hlc_init(prm);
+    stC = channel_init(sp2.chan); stH = hlc_init(prm);
     N = round(30/Tb);
     for k = 1:N
         [stP, o] = plant_step(stP, 0.029, 0, zeros(1,6), 0, 0, Tb, sp2.plant);

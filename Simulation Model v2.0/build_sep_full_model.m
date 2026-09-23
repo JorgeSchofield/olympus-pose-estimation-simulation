@@ -128,7 +128,7 @@ function build_sep_full_model(modelName, Tb)
           'LLC/1','Canal/1'      ; 'LLC/2','Canal/2'
           'LLC/3','Canal/3'      ; 'Azar_canal/1','Canal/4'
           'Canal/1','HLC/1'      ; 'Canal/2','HLC/2'
-          'Canal/3','HLC/3'
+          'Canal/3','HLC/3'      ; 'Azar_canal/1','HLC/4'
           'HLC/1','Pose/1'       ; 'HLC/2','Latencia/1'
           'HLC/3','Diag/1'       ; 'Planta/1','Verdad/1' };
     for i = 1:size(L,1)
@@ -212,7 +212,7 @@ function c = canalCode()
     'persistent st sp'
     'if isempty(st)'
     '    sp = sim_params();'
-    '    st = channel_init();'
+    '    st = channel_init(sp.chan);'
     'end'
     'obuf = zeros(1, raw_buf_max(), ''uint8''); on = 0; arrived = false;'
     '[st, b, nn, a] = channel_step(st, buf, n, emit, u, sp.chan, sp.sim.Tb);'
@@ -223,7 +223,7 @@ end
 
 function c = hlcCode()
     c = {
-    'function [pose, lat, diag_out] = HLC(buf, n, arrived)'
+    'function [pose, lat, diag_out] = HLC(buf, n, arrived, u)'
     'persistent st sp gp ep'
     'if isempty(st)'
     '    sp = sim_params(); gp = sep_geo_params(); ep = sep_ekf_params();'
@@ -231,7 +231,7 @@ function c = hlcCode()
     'end'
     'pose = zeros(5,1); lat = 0; diag_out = zeros(3,1);'
     '[st, x, ~, dg, l, ~] = hlc_step(st, buf, n, arrived, ...'
-    '                                gp, ep, sp.agents, sp.sim.Tb);'
+    '                                gp, ep, sp.agents, sp.sim.Tb, u(3));'
     'pose(:) = x; diag_out(:) = dg; lat = l;'
     'end'
     };

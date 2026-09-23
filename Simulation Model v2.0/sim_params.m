@@ -10,6 +10,8 @@ function s = sim_params()
 %   duplica entre los dos archivos.
 
     % --- planta ---------------------------------------------------------
+
+    lp = llc_params();   % fuente unica del modelo de enlace y de sensores
     s.plant.dt_fine    = 0.001;                  % [s] rejilla del modo MATLAB
     s.plant.seg_hold   = 2.0;                    % [s] cola tras el ultimo segmento
     s.plant.half_track = [0.2905 0.2855 0.3570]; % [m] semivias F, C, R
@@ -45,6 +47,10 @@ function s = sim_params()
     s.imu.accel_nd        = 2.94e-3;  % [m/s^2/sqrt(Hz)]
 
     % --- canal serial (USART0 -> USB, 115200 8N1) -----------------------
+    % byte_s NO se escribe aqui: es una propiedad del enlace y su fuente
+    % unica es llc_params (que conoce el baudrate). Copiarlo a mano
+    % permitiria que baud y byte_s se desincronizaran en silencio.
+    s.chan.byte_s    = lp.byte_s;   % [s] tiempo de un byte, 8N1
     s.chan.p_loss    = 0.005;   % [-] perdida de trama (indicador admite 1 %)
     s.chan.p_corrupt = 0.000;   % [-] byte alterado. SIN CRC en la trama ASCII
     s.chan.poll_s    = 0.005;   % [s] sondeo del hilo de adquisicion
@@ -52,6 +58,15 @@ function s = sim_params()
     s.chan.max_inflight = 16;   % tramas simultaneas en vuelo (ring del canal)
 
     % --- agentes del HLC ------------------------------------------------
+    % gyro_scale y age_est los LEE hlc_step. Estaban definidos en
+    % rover_params, que ya no es la fuente numerica: el bloque de Simulink
+    % llama a sim_params directamente y no los veia. Mismo fallo que
+    % chan.byte_s.
+    s.agents.gyro_scale   = (pi/180) / lp.gyro_lsb;  % LSB -> rad/s
+    s.agents.age_est      = 0.010;   % [s] edad supuesta de la muestra al
+                                     % llegar. El HLC NO puede conocerla: la
+                                     % trama no lleva el instante real de
+                                     % muestreo, solo el contador de software.
     s.agents.est_period = 0.020;  % [s] periodo del agente de estimacion.
                                   % Si excede el intervalo entre tramas, el
                                   % buzon de profundidad 1 sobrescribe.
