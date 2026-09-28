@@ -25,7 +25,8 @@ function test_params_contract()
 
     req = { 'chan',   {'byte_s','p_loss','p_corrupt','poll_s','max_inflight'}
             'agents', {'gyro_scale','age_est','est_period','est_delay', ...
-                       'com_delay','jitter','dt_reject','dcount_reject'}
+                       'com_delay','jitter','dt_reject','dcount_reject', ...
+                       'mbox_policy','mbox_mode'}
             'plant',  {'half_track','chi_true','terrain','slip'}
             'sim',    {'Tb'} };
 
@@ -83,6 +84,18 @@ function test_params_contract()
         'llc.byte_s no corresponde a llc.baud');
     n = n + 1;
 
+    % --- la cadena y la bandera del buzon deben coincidir ---------------
+    %   Si alguien edita mbox_policy y la bandera no se recalcula, el
+    %   modelo simula una politica distinta de la que dice simular.
+    esperado = 0;
+    if     strcmpi(sp.agents.mbox_policy, 'overwrite'), esperado = 1;
+    elseif strcmpi(sp.agents.mbox_policy, 'block'),     esperado = 2;
+    end
+    assert(sp.agents.mbox_mode == esperado, ...
+        'mbox_mode (%d) no corresponde a mbox_policy ("%s")', ...
+        sp.agents.mbox_mode, sp.agents.mbox_policy);
+    n = n + 1;
+
     % --- la cola del canal debe honrar el parametro ---------------------
     %   Estuvo fijada a 4 en el codigo mientras el parametro decia 16.
     ch = sp.chan;  ch.max_inflight = 7;
@@ -116,7 +129,12 @@ function test_params_contract()
         assert(isempty(strfind(src, 'strcmpi')) && ...
                isempty(strfind(src, 'strcmp(')), ...
             ['%s compara cadenas. Usar las banderas numericas ' ...
-             '(llc.sw_clock, llc.tx_block).'], f{1});
+             '(llc.sw_clock, llc.tx_block, ag.mbox_mode).'], f{1});
+        %   switch sobre una cadena es el mismo problema: un case con
+        %   comillas delata que se esta ramificando sobre texto.
+        assert(isempty(regexp(src, 'case\s*''', 'once')), ...
+            ['%s hace switch sobre una cadena. Usar la bandera ' ...
+             'numerica equivalente.'], f{1});
     end
     n = n + 1;
 

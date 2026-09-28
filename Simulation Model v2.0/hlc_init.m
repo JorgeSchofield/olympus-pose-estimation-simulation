@@ -17,6 +17,10 @@ function st = hlc_init(prm)
     st.n_frames   = 0;
     st.n_badparse = 0;
     st.n_implaus  = 0;
-    st.n_overwrite= 0;
+    st.n_overwrite  = 0;   % politica 'overwrite': muere el mensaje VIEJO
+    st.n_discard    = 0;   % politica 'discard_new': muere el NUEVO (CMAES)
+    st.n_stall_loss = 0;   % politica 'block': trama perdida en el buffer del tty
+    st.t_stalled    = 0;   % [s] tiempo con el agente de adquisicion detenido
+    st.stalled      = false;
     st.n_updates  = 0;
 end

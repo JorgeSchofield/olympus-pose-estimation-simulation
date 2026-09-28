@@ -15,7 +15,14 @@ function s = sim_params()
     s.plant.dt_fine    = 0.001;                  % [s] rejilla del modo MATLAB
     s.plant.seg_hold   = 2.0;                    % [s] cola tras el ultimo segmento
     s.plant.half_track = [0.2905 0.2855 0.3570]; % [m] semivias F, C, R
-    s.plant.chi_true   = 1.20;                   % [-] chi VERDADERO  TBD
+    % chi VERDADERO de la planta. Se fija ligeramente por encima del valor
+    % calibrado del filtro (geo.chi) a proposito: ese 1.7 % de diferencia
+    % ES el residuo sistematico que UMBmark esta disenado para medir.
+    % Igualarlos daria un cuadrado perfecto y la prueba no mediria nada;
+    % separarlos mucho (chi_true = 1.20 contra chi = 1.00, como estaba)
+    % saca al metodo de su rango de validez: el rover giraria 75 grados en
+    % vez de 90 y el recorrido no volveria cerca del origen.
+    s.plant.chi_true   = 1.22;                   % [-] chi VERDADERO  TBD
 
     % Deslizamiento: tres mecanismos separados, cada uno ejercita una parte
     % distinta. Ventanas en [t_ini t_fin] segundos.
@@ -67,6 +74,41 @@ function s = sim_params()
                                      % llegar. El HLC NO puede conocerla: la
                                      % trama no lleva el instante real de
                                      % muestreo, solo el contador de software.
+    % SEMANTICA DEL BUZON de CMAES. Profundidad 1: xQueueCreate(1, ...).
+    %   'discard_new' : lo que CMAES hace HOY. Agent_Msg::send es
+    %                   xQueueSend con timeout = 0, asi que ante buzon
+    %                   lleno muere el mensaje NUEVO y el consumidor recibe
+    %                   el mas VIEJO. Es el valor por omision porque es el
+    %                   comportamiento real, no el deseable.
+    %   'overwrite'   : lo que conviene para datos de sensor, donde la
+    %                   muestra reciente vale mas que la vieja. NO EXISTE en
+    %                   CMAES: habria que anadir MAES_QueueOverwrite a la
+    %                   capa de portabilidad, junto con la rotacion de N
+    %                   buffers (CMAES pasa punteros, no copias).
+    %   'block'       : xQueueSend con timeout > 0. NO USAR en la ruta de
+    %                   sensores: detiene al agente de adquisicion, que deja
+    %                   de drenar el puerto serial, y las tramas se pierden
+    %                   en el buffer del tty. Convierte presion de buzon en
+    %                   fallo del indicador de ENTREGA.
+    %
+    % Con el agente de estimacion mas rapido que la llegada de tramas el
+    % buzon casi no se llena y las tres son indistinguibles. La diferencia
+    % aparece cuando se igualan las tasas, que es justo lo que provoca
+    % arreglar el reloj del LLC: las dos correcciones interactuan.
+    % La cadena es para leerla; el codigo usa la bandera NUMERICA. Igual
+    % que sw_clock y tx_block en llc_params: comparar cadenas dentro de un
+    % bloque MATLAB Function obliga a llevar campos char en el struct de
+    % parametros, que codegen trata como arreglos de tamano variable.
+    % OJO: mbox_policy vive en una LOCAL primero. Escribir
+    % s.agents.mbox_mode = f(s.agents.mbox_policy) leeria el struct y luego
+    % le anadiria un campo, que codegen rechaza.
+    mbox_policy = 'discard_new';        % 'discard_new' | 'overwrite' | 'block'
+    if     strcmpi(mbox_policy, 'overwrite'), mbox_mode = 1;
+    elseif strcmpi(mbox_policy, 'block'),     mbox_mode = 2;
+    else,                                     mbox_mode = 0;
+    end
+    s.agents.mbox_policy  = mbox_policy;
+    s.agents.mbox_mode    = mbox_mode;   % 0 descarta nuevo, 1 sobrescribe, 2 bloquea
     s.agents.est_period = 0.020;  % [s] periodo del agente de estimacion.
                                   % Si excede el intervalo entre tramas, el
                                   % buzon de profundidad 1 sobrescribe.
