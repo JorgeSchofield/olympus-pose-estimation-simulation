@@ -27,8 +27,17 @@ function test_sep_model()
     c = 1000;
     [ds, dth, mov] = sep_odometry(-c, c, geo);
     assert(ds > 0 && abs(dth) < 0.02 && mov == 1, 'recta mal resuelta');
-    [ds2, dth2, ~] = sep_odometry(-c, -c, geo);
-    assert(abs(ds2) < 1e-9, 'giro: ds debe ser ~0');
+    %   Giro en el sitio: cada lado recorre la MISMA distancia en sentidos
+    %   opuestos. Con las constantes medidas los dos lados difieren un 3.7 %,
+    %   asi que cuentas iguales NO dan distancias iguales: se calculan las
+    %   cuentas de cada lado a partir de la distancia. El residuo es de
+    %   cuantizacion, menor que una cuenta.
+    d = c*abs(geo.m_per_tick_R);
+    cR = -round(d/abs(geo.m_per_tick_R));    % derecha adelante (negativo)
+    cL = -round(d/abs(geo.m_per_tick_L));    % izquierda atras
+    [ds2, dth2, ~] = sep_odometry(cR, cL, geo);
+    assert(abs(ds2) < max(abs(geo.m_per_tick_R), abs(geo.m_per_tick_L)), ...
+        'giro: ds debe ser ~0 (menos de una cuenta)');
     assert(dth2 > 0, 'giro: derecha adelante debe dar dth>0 (antihorario)');
     [~, ~, mov0] = sep_odometry(0, 0, geo);
     assert(mov0 == 0, 'reposo: moving debe ser 0');
@@ -71,7 +80,7 @@ function test_sep_model()
            isequal(f.gyr,[100 -100 32767]) && ...
            f.encL == -2147483648 && f.encR == 2147483647, ...
            'roundtrip RAW: campo mal decodificado');
-    assert(buf(1:4) == uint8('RAW:'), 'falta el prefijo');
+    assert(all(buf(1:4) == uint8('RAW:')), 'falta el prefijo');
     assert(buf(nb) == uint8(10), 'la trama debe terminar en salto de linea');
     n = n + 1;
 
@@ -139,8 +148,15 @@ function test_sep_model()
         [stB,~,~,~,~,~] = hlc_step(stB, b{1}{1}, b{1}{2}, true, geo, prm, ag, Tb);
         [stB,~,~,~,~,~] = hlc_step(stB, zeros(1,raw_buf_max(),'uint8'), 0, false, geo, prm, ag, Tb);
     end
-    assert(abs(stA.x(1)-stB.x(1)) < 1e-9 && abs(stA.x(2)-stB.x(2)) < 1e-9, ...
-        'una trama perdida produjo error PERMANENTE de posicion');
+    %   La trama perdida solo cambia la resolucion temporal: con las
+    %   constantes medidas (3.7 % de asimetria) cada trama lleva un giro
+    %   minimo y el orden de integracion deja ~1e-6 m de diferencia. Perder
+    %   la DISTANCIA de una trama costaria su avance completo (~2.4 mm), asi
+    %   que la cota es el 1 % de ese avance.
+    ds_frame = sep_odometry(-1000, 1000, geo);
+    dpos = hypot(stA.x(1)-stB.x(1), stA.x(2)-stB.x(2));
+    assert(dpos < 0.01*ds_frame, ...
+        'una trama perdida produjo error PERMANENTE de posicion (%.3g m)', dpos);
     n = n + 1;
 
     fprintf('OK: %d pruebas superadas.\n', n);
