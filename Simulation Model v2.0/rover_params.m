@@ -28,6 +28,8 @@ function p = rover_params()
 %            experimento, no un numero pendiente de medir. Mezclarlo con
 %            TBD infla la cuenta y diluye la senal: el inventario deja de
 %            leerse cuando la mitad de lo que lista no se puede medir.
+%     'DES'  decision de DISENO del software (por ejemplo, activar el agente
+%            de estimacion por evento). Tampoco es una medida pendiente.
 %
 %   Los resultados obtenidos con cualquier parametro en 'TBD' NO son
 %   concluyentes para el indicador de exactitud.
@@ -94,6 +96,14 @@ p.status.jitter_s        = 'PROV';
 p.status.est_period      = 'PROV';
 p.status.est_delay       = 'PROV';
 p.status.com_delay       = 'PROV';
+p.status.est_mode        = 'DES';   % eleccion de diseno (D3), no medida
+p.status.dt_reject       = 'PROV';
+p.status.dcount_reject   = 'PROV';  % depende de la anomalia de cuentas/vuelta
+p.status.reset_window    = 'PROV';
+p.status.k_reref         = 'PROV';
+p.status.n_still         = 'PROV';  % revisar si se confirma el rebote del Hall
+p.status.tilt_rollover   = 'PROV';
+p.status.t_gap_max       = 'PROV';
 
 % =========================================================================
 % 8. INDICADORES DEL PROYECTO

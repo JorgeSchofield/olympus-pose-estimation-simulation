@@ -159,6 +159,80 @@ function test_sep_model()
         'una trama perdida produjo error PERMANENTE de posicion (%.3g m)', dpos);
     n = n + 1;
 
+    % --- 11) descartes en el buzon 2 NO pierden distancia ---------------
+    %   La regla de los acumuladores aplicada al buzon fusion -> estimacion:
+    %   el mensaje lleva S, TH y OM acumulados, asi que descartar uno solo
+    %   alarga el paso siguiente. Misma recta ideal que el caso 9, con y sin
+    %   un descarte forzado de cada 3 mensajes.
+    pose_end = zeros(2,2);
+    ndrop = 0;
+    for r = 1:2
+        ag = sp2.agents;
+        if r == 2, ag.test_drop_every = 3; end
+        stP = plant_init();  stL = llc_init();
+        stC = channel_init(sp2.chan); stH = hlc_init(prm);
+        for k = 1:N
+            [stP, o] = plant_step(stP, 0.029, 0, zeros(1,6), 0, 0, Tb, sp2.plant);
+            [stL, b, nb, em] = llc_step(stL, o.w, o.a_body, 0, 0, o.arc, ...
+                                        zeros(1,5), lp, geo, imu0, Tb);
+            [stC, cb, cn, ar] = channel_step(stC, b, nb, em, [1 1 0], sp2.chan, Tb);
+            [stH, ~, ~, ~, ~, ~] = hlc_step(stH, cb, cn, ar, geo, prm, ag, Tb);
+        end
+        pose_end(r,:) = stH.x(1:2).';
+        if r == 2, ndrop = stH.n_test_drop; end
+    end
+    assert(ndrop > 100, 'el caso 11 no descarto mensajes (%d)', ndrop);
+    dpos = hypot(pose_end(1,1)-pose_end(2,1), pose_end(1,2)-pose_end(2,2));
+    assert(dpos < 1e-3, ...
+        ['descartar 1 de cada 3 mensajes del buzon 2 movio la pose final ' ...
+         '%.2f mm: se esta perdiendo distancia'], 1e3*dpos);
+    n = n + 1;
+
+    % --- 12) trama corrupta: la referencia es la ULTIMA ACEPTADA --------
+    %   (a) corrupta pero creible: entra, y la trama siguiente la deshace
+    %       porque S se recalcula desde acumuladores absolutos.
+    %   (b) implausible: se rechaza, y el avance llega integro con la
+    %       siguiente trama buena (hlc_step re-referenciaba con la trama
+    %       rechazada y perdia distancia).
+    ag = sp.agents;
+    clean = [0 0 0; 20 1000 -1000; 40 2000 -2000; 60 3000 -3000];
+    bad_a = clean;  bad_a(3,2) = 2500;      % 500 cuentas de mas, creible
+    bad_b = clean;  bad_b(3,2) = 900000;    % salto imposible
+    S = zeros(1,3);  nrej = zeros(1,3);
+    seqs = {clean, bad_a, bad_b};
+    for r = 1:3
+        fs = sep_fusion_init();
+        q = seqs{r};
+        for k = 1:size(q,1)
+            [fs, ~, ~] = sep_fusion_step(fs, q(k,1), q(k,2), q(k,3), 0, ...
+                                         [0 0 16384], true, geo, ag);
+        end
+        S(r) = fs.S;  nrej(r) = fs.n_reject;
+    end
+    assert(abs(S(2) - S(1)) < 1e-12, 'trama corrupta creible: S no se recupero');
+    assert(nrej(3) == 1 && abs(S(3) - S(1)) < 1e-12, ...
+        'trama implausible: se perdio distancia o no se rechazo');
+    n = n + 1;
+
+    % --- 13) hueco largo: subpasos, no recorte de dt --------------------
+    %   2 s de arco (0.058 m, 0.2 rad, giroscopio coherente) en un solo
+    %   mensaje. Recortar dt a 0.5 s daria w_enc = 0.4 rad/s contra 0.1 del
+    %   giroscopio: una discrepancia falsa que el detector de deslizamiento
+    %   tomaria por patinaje. Con subpasos la discrepancia es nula.
+    es = sep_estimation_init(prm);
+    o0 = sep_odom_empty();
+    o1 = o0;
+    o1.t_cum = 2000;  o1.S = 0.058;  o1.TH = 0.2;
+    o1.n_g = 100;  o1.OM = 100*0.1;  o1.n_s = 100;
+    [es, ~, ~, d0] = sep_estimation_step(es, o0, prm, ag);
+    [es, xe, dg, d1] = sep_estimation_step(es, o1, prm, ag);
+    assert(~d0 && d1, 'la primera llamada debe solo referenciar');
+    assert(es.gap && es.n_substeps == 4, 'el hueco de 2 s debia ir en 4 subpasos');
+    assert(dg(1) < 1e-9, 'discrepancia giroscopio-odometria falsa: %.3g rad/s', dg(1));
+    assert(abs(hypot(xe(1), xe(2)) - 0.058) < 0.01*0.058, ...
+        'el hueco largo no conservo la distancia');
+    n = n + 1;
+
     fprintf('OK: %d pruebas superadas.\n', n);
 end
 
