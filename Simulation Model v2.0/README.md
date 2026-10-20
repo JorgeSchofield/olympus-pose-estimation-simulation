@@ -314,6 +314,33 @@ returning to the bench: the campaign measured at 20, 50 and 80 % PWM and `sep_ge
 averages the three. If counts per revolution **rise with speed**, it is bounce. If they are
 flat, the spread is real.
 
+### Front wheels: FR counts 2.47 × FL (2026-10)
+
+When the rover was assembled, the front right wheel was found to count **2.47 times** the
+pulses per revolution of the front left one, a physical difference between the two units.
+`sep_geo_params` now sets `ticks_per_rev(FR) = ratio_FR_FL · ticks_per_rev(FL)` with
+`ratio_FR_FL = 2.47` (the bench value of FR, 43 698, is kept as `ticks_per_rev_banco` for
+reference). Because the LLC sends one count **sum** per side, this only changes the right
+side constant:
+
+| | bench FR | FR = 2.47 × FL |
+|---|---|---|
+| right side, counts per metre | 407 924 | 678 412 |
+| `m_per_tick_R` | −2.451e-6 m | −1.474e-6 m |
+| asymmetry between sides | 3.7 % | ≈ 60 % |
+
+Heading is unaffected (it comes from the gyro); **distance is**: a wrong right-side constant
+by a factor *f* scales the distance by (1 + *f*)/2. The simulated plant and the estimator use
+the same per-wheel model, so the demos do not show this error; `prm.s2_ds_floor` was
+updated to the new mean constant (1.9e-6 m) and `rover_params` excludes FR from the
+bench-anomaly spread.
+
+**Per-side calibration.** `k_cal_R` and `k_cal_L` (default 1, `TBD`) multiply the derived
+constants. They come from straight runs of known length on the real rover, measured by
+`agents/tools/odom_calib.py` in the application repository. The simulated plant keeps the
+per-wheel model, so with `k_cal ≠ 1` the simulation shows the error the calibration
+removes on the rover. After setting them, run `export_pose_conf`.
+
 ---
 
 ## Known limitations

@@ -16,10 +16,20 @@ function test_sep_model()
     % --- 1) constante por lado: NO es la de una rueda -------------------
     %   Es 1/sum_i(N_i/(2*pi*R_i)), aproximadamente un TERCIO de la de una
     %   rueda. Confundirlas es un error de escala de 3x, no un ajuste fino.
-    mpt_1 = 2*pi*geo.R_wheel(1)/geo.ticks_per_rev(1);
-    razon = mpt_1 / abs(geo.m_per_tick_R);
-    assert(razon > 2.5 && razon < 3.5, ...
-        'la constante por lado deberia ser ~1/3 de la de una rueda');
+    %   Con FR = 2.47 x FL las tres ruedas derechas ya no son parecidas, asi
+    %   que se verifica la definicion: inverso de la suma de cuentas por
+    %   metro, menor que la constante de CUALQUIER rueda del lado.
+    sR = 0;
+    for i = geo.idx_R
+        sR = sR + geo.ticks_per_rev(i)/(2*pi*geo.R_wheel(i));
+        mpt_i = 2*pi*geo.R_wheel(i)/geo.ticks_per_rev(i);
+        assert(mpt_i / abs(geo.m_per_tick_R) > 1.5, ...
+            'la constante por lado no puede ser la de una rueda');
+    end
+    assert(abs(abs(geo.m_per_tick_R)*sR - 1) < 1e-12, ...
+        'la constante por lado deberia ser 1/sum_i(N_i/(2 pi R_i))');
+    assert(abs(geo.ticks_per_rev(1) - geo.ratio_FR_FL*geo.ticks_per_rev(2)) < 1e-9, ...
+        'FR debe contar ratio_FR_FL veces lo que cuenta FL');
     n = n + 1;
 
     % --- 2) odometria: recta, giro, signo y reposo ----------------------
