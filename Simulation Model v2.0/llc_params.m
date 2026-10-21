@@ -105,6 +105,18 @@ function llc = llc_params()
     llc.accel_lsb  = 16384;        % LSB/g con ACCEL_CONFIG = 0 (+-2 g)
     llc.i16_max    = 32767;
 
+    % ---- trama RAW ----------------------------------------------------
+    % Firmware v3.0 (driver MPU-9250): agrega temp e imu_ok al final y emite
+    % la trama SIEMPRE; si la IMU no responde, imu_ok = 0 y los seis campos
+    % inerciales van en cero. v2.20 no emitia RAW sin IMU. Los dos se
+    % parsean igual que en la aplicacion (raw_frame_from_bytes).
+    llc.frame_version = 3;         % 3 (firmware actual) | 2 (v2.20)
+    llc.temp_raw      = 3800;      % ~32.4 C (capturas del 2026-10-06)
+    % Falla de la IMU en [t0, t1) segundos, para probar el modo degradado
+    % (como llc_emulator.py --imu-off). -1 = nunca.
+    llc.imu_fail_t0   = -1;
+    llc.imu_fail_t1   = -1;
+
     % DLPF. El driver viejo ponia CONFIG = 0x03. A 50 Hz de muestreo,
     % Nyquist esta en 25 Hz, de modo que un ancho de banda de ~41 Hz ALIASA
     % justo en la banda donde vibran los motores. Bajar a ~20 Hz cuesta

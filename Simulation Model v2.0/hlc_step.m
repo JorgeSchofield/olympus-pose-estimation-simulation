@@ -126,11 +126,13 @@ function [st, pose, P, diag_out, lat, publish] = hlc_step(st, buf, n, arrived, .
             end
 
             if acepta
-                st.box_tick = f.tick_ms;
+                % Mismas entradas que la aplicacion (pe_fusion_inputs): base
+                % de tiempo segun ag.dt_source, eje de guinada configurable
+                % e imu_ok de la trama. st.t es la llegada al HLC.
+                [st.box_tick, st.box_gz, st.box_acc, st.box_imu_ok] = ...
+                    hlc_fusion_inputs(f, floor(st.t*1000), ag);
                 st.box_encL = f.encL;
                 st.box_encR = f.encR;
-                st.box_gz   = f.gyr(3);
-                st.box_acc  = f.acc;
                 st.box_tsam = st.t - ag.age_est;  % edad estimada de la muestra
                 st.box_full = true;
             end
@@ -147,7 +149,7 @@ function [st, pose, P, diag_out, lat, publish] = hlc_step(st, buf, n, arrived, .
     if st.box_full && ~(ag.mbox_mode == 2 && st.box2_full)
         [st.fst, odom, emit] = sep_fusion_step(st.fst, st.box_tick, st.box_encL, ...
                                                st.box_encR, st.box_gz, st.box_acc, ...
-                                               true, geo, ag);
+                                               st.box_imu_ok, geo, ag);
         st.box_full  = false;
         st.n_implaus = st.fst.n_reject;
         if emit

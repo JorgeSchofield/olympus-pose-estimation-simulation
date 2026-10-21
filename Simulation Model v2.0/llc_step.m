@@ -124,8 +124,17 @@ function [st, buf, n, emit] = llc_step(st, w_true, a_body, pitch, roll, arc, ...
         encR = sum(st.lat_cnt(geo.idx_R));
         encL = sum(st.lat_cnt(geo.idx_L));
 
-        [buf, n] = raw_frame_bytes(st.clock_ms, st.lat_acc, st.lat_gyr, encL, encR);
-        emit = true;
+        imu_ok = ~(st.t_real >= llc.imu_fail_t0 && st.t_real < llc.imu_fail_t1);
+        if imu_ok
+            [buf, n] = raw_frame_bytes(st.clock_ms, st.lat_acc, st.lat_gyr, encL, encR, ...
+                                       llc.temp_raw, 1, llc.frame_version);
+            emit = true;
+        elseif llc.frame_version >= 3
+            % v3.0 sin IMU: trama completa, inerciales en cero, imu_ok = 0
+            [buf, n] = raw_frame_bytes(st.clock_ms, zeros(1,3), zeros(1,3), encL, encR, ...
+                                       0, 0, llc.frame_version);
+            emit = true;
+        end                                % v2.20 sin IMU: no hay trama
 
         if llc.sw_clock > 0.5
             st.clock_ms = mod(st.clock_ms + llc.LOOP_MS, 2^32);

@@ -1,7 +1,12 @@
-function [buf, n] = raw_frame_bytes(tick_ms, acc, gyr, encL, encR)
+function [buf, n] = raw_frame_bytes(tick_ms, acc, gyr, encL, encR, temp_raw, imu_ok, version)
 %RAW_FRAME_BYTES  Trama RAW como vector de bytes uint8, igual que el LLC.
 %
-%   [buf, n] = RAW_FRAME_BYTES(tick_ms, acc, gyr, encL, encR)
+%   [buf, n] = RAW_FRAME_BYTES(tick_ms, acc, gyr, encL, encR)            v2.20
+%   [buf, n] = RAW_FRAME_BYTES(..., temp_raw, imu_ok, version)           version 2 o 3
+%
+%   version = 3 agrega ':<temp>:<imu_ok>' al final (firmware v3.0, driver
+%   MPU-9250). Con imu_ok = 0 el firmware v3.0 manda los seis campos
+%   inerciales en cero; eso lo decide quien llama (llc_step).
 %
 %   buf : uint8(1 x RAW_BUF_MAX), relleno con ceros a partir de n
 %   n   : bytes validos
@@ -23,7 +28,8 @@ function [buf, n] = raw_frame_bytes(tick_ms, acc, gyr, encL, encR)
 %   alterado produce un numero PLAUSIBLE que nadie detecta. Ese es el
 %   riesgo que esta ruta no cubre y que el formato binario con CRC si.
 %
-%   Tamano de buffer: el peor caso es 4 + 10 + 6*7 + 2*12 + 1 = 81 bytes.
+%   Tamano de buffer: el peor caso es 4 + 10 + 6*7 + 2*12 + 1 = 81 bytes
+%   (v2.20) y 81 + 7 + 2 = 90 bytes (v3.0).
 %   RAW_BUF_MAX = 100 deja margen y es el mismo valor que reserva el
 %   firmware para raw_buf.
 %#codegen
@@ -47,6 +53,12 @@ function [buf, n] = raw_frame_bytes(tick_ms, acc, gyr, encL, encR)
     [buf, i] = wr_i32(encL, buf, i);
     i = i + 1;  buf(i) = uint8(':');
     [buf, i] = wr_i32(encR, buf, i);
+    if nargin >= 8 && version >= 3
+        i = i + 1;  buf(i) = uint8(':');
+        [buf, i] = wr_i32(temp_raw, buf, i);
+        i = i + 1;  buf(i) = uint8(':');
+        [buf, i] = wr_u32(double(imu_ok ~= 0), buf, i);
+    end
     i = i + 1;  buf(i) = uint8(10);          % '\n'
 
     n = i;

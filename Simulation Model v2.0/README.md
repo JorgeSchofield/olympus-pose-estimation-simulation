@@ -30,7 +30,7 @@ controller's timing rather than in the filter. The model now spans plant → LLC
 ```matlab
 >> run_sep_full_demo     % whole chain: plant → LLC → link → HLC
 >> run_sep_demo          % estimation agent only, much faster
->> test_sep_model        % 13 unit tests, no toolboxes
+>> test_sep_model        % 15 unit tests, no toolboxes
 >> test_sep_frame        % reproduces the data-contract golden vector
 >> codegen_hlc_core      % C for the HLC agents (needs MATLAB Coder)
 >> export_pose_conf      % parameters for the HLC application
@@ -141,8 +141,10 @@ go in as internal functions. Six files in all become C (plus the message definit
 | `plant_step.m` / `plant_init.m` | Ground truth, per wheel, with independent slip ratios. |
 | `llc_step.m` / `llc_init.m` | ATmega2560 loop: sub-task schedule, two clocks, IMU quantization, i32 accumulators, stall detection. |
 | `channel_step.m` / `channel_init.m` | Serial link: frame-level delay, loss, single-byte corruption. |
-| `hlc_step.m` / `hlc_init.m` | Acquisition, fusion, estimation and communication agents with two depth-1 mailboxes. `ag.est_mode` selects a periodic (default) or event-driven estimation agent; `ag.test_drop_every` forces mailbox drops for testing. |
-| `raw_frame_bytes.m` / `raw_frame_from_bytes.m` | RAW ASCII frame, byte-exact with the firmware's `write_u32`/`write_i32`. |
+| `hlc_step.m` / `hlc_init.m` | Acquisition, fusion, estimation and communication agents with two depth-1 mailboxes. `ag.est_mode` selects an event-driven (default, as the application) or periodic estimation agent; `ag.test_drop_every` forces mailbox drops for testing. |
+| `hlc_fusion_inputs.m` | Time base (`ag.dt_source`) and IMU axes (`ag.gyro_yaw_axis`) handed to `sep_fusion_step`. Mirror of `pe_fusion_inputs` in the application. |
+| `hlc_replay.m` | Runs a recording (`llcmux` record, converted capture, emulator file) through the same chain as `olympus-pose -r`; one row per published pose. |
+| `raw_frame_bytes.m` / `raw_frame_from_bytes.m` | RAW ASCII frame, byte-exact with the firmware's `write_u32`/`write_i32`; v3.0 (`temp`, `imu_ok`) or v2.20. The parser is the mirror of the application's `pe_raw_parse`. |
 
 ### Parameters, models and tests
 
@@ -341,6 +343,30 @@ constants. They come from straight runs of known length on the real rover, measu
 per-wheel model, so with `k_cal ≠ 1` the simulation shows the error the calibration
 removes on the rover. After setting them, run `export_pose_conf`.
 
+### Same estimation as the application (2026-10-21)
+
+The simulated HLC and the CMAES application run the same chain, verified by tests in the
+application repository (`agents/tests/test_core.c`, DESIGN.md §9.6):
+
+- **Estimation is event-driven** by default (`est_policy = 'event'`), as in the
+  application. `'periodic'` (20 ms) remains to reproduce thesis Table 3.7.
+- **Frame and parser:** the simulated LLC sends the v3.0 frame and can lose the IMU
+  (`llc.imu_fail_t0/t1`: zeroed inertial fields and `imu_ok = 0`, as the firmware).
+  `raw_frame_from_bytes` applies the rules of `pe_raw_parse`; on 5000 mutated lines both
+  give the same verdict and values.
+- **Fusion inputs:** `imu_ok` from the frame, time base `dt_source` and IMU axis
+  `gyro_yaw_axis` through `hlc_fusion_inputs` (= `pipeline.c`). Both are exported to
+  `pose.conf` (`est.*`), so the model stays the only source of the parameters.
+- **Replay:** `hlc_replay(file)` gives the same poses as `olympus-pose -r file`, at the
+  same input lines (relative difference 1.4e-17 on a 2482-line recording, both time
+  bases).
+
+**Time base and the software clock.** With the simulated LLC clock at 65 % of real time,
+`run_sep_full_demo` ends the UMBmark 45 % off with `dt_source = 0` (LLC tick, the
+default and the thesis rule), and closes to 1.34 % (CW) / 0.50 % (CCW) with
+`dt_source = 1` (HLC arrival time). Use 1 for live tests until the firmware loop is
+timer-driven.
+
 ---
 
 ## Known limitations
@@ -409,8 +435,10 @@ Space Systems Laboratory (SETEC) — ELANaV project.
 
 Related repositories: `rover-low-level-controller` (Rust `no_std`, ATmega2560) and
 `olympus-hlc-rpi5` (Yocto image and Python bridge for the Raspberry Pi 5). The LLC model in
-this repository tracks firmware v2.20; the dead MPU-6050 driver and the placeholder EKF in
-that repository are future-work scaffolding and are deliberately **not** modelled here.
+this repository tracks firmware v3.0 (MPU-9250 driver, `RAW:` frame with `temp` and
+`imu_ok`, emitted even without IMU; `llc.frame_version = 2` gives the v2.20 frame); the
+placeholder EKF in that repository is future-work scaffolding and is deliberately **not**
+modelled here.
 
 Requirements this model supports: ≥ 50 Hz sensor sampling, ≥ 10 Hz pose output, < 100 ms
 end-to-end latency, ≥ 99 % inter-agent message delivery, ≤ 3 % position error against ground

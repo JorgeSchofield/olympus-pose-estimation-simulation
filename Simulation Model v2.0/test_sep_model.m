@@ -243,6 +243,50 @@ function test_sep_model()
         'el hueco largo no conservo la distancia');
     n = n + 1;
 
+    % --- 14) trama v3.0 e IMU caida: misma ruta que la aplicacion ---------
+    %   v3.0 agrega temp e imu_ok. Con imu_ok = 0 la fusion no cuenta la
+    %   muestra de giroscopio y la estimacion marca imu_invalid (modo solo
+    %   odometria), como el agente de la aplicacion con PE_RAW_IMU_VALID.
+    [bv, nv] = raw_frame_bytes(40, [1 2 3], [4 5 6], 7, -8, 3797, 1, 3);
+    [f, ok] = raw_frame_from_bytes(bv, nv);
+    assert(ok && f.version == 3 && f.temp == 3797 && f.imu_ok && f.encR == -8, ...
+        'roundtrip v3.0 mal decodificado');
+    b = uint8('RAW:1:2:3:4:5:6:7:8:9:10:2');      % imu_ok fuera de rango
+    [~, o1] = raw_frame_from_bytes(b, numel(b));
+    b = uint8('RAW:1:+2:3:4:5:6:7:8:9');          % '+' no se acepta
+    [~, o2] = raw_frame_from_bytes(b, numel(b));
+    b = uint8('RAW:1:2:3:4:5:6:7:8:9 ');          % nada despues del ultimo campo
+    [~, o3] = raw_frame_from_bytes(b, numel(b));
+    assert(~o1 && ~o2 && ~o3, 'el parser del modelo debe rechazar lo que rechaza pe_raw_parse');
+    ag14 = sp.agents;
+    stI = hlc_init(prm);
+    for k = 0:40
+        ok_k = k < 20;                             % la IMU cae en la trama 20
+        if ok_k
+            [bk, nk] = raw_frame_bytes(20*k, [0 0 16384], [0 0 0], 100*k, -100*k, 3797, 1, 3);
+        else
+            [bk, nk] = raw_frame_bytes(20*k, [0 0 0], [0 0 0], 100*k, -100*k, 0, 0, 3);
+        end
+        stI.t = 0.020*k;
+        [stI, ~, ~, ~, ~, ~] = hlc_step(stI, bk, nk, true, geo, prm, ag14, Tb);
+    end
+    %   La primera trama solo referencia: 19 muestras validas (tramas 1..19).
+    assert(stI.fst.n_g == 19 && stI.est.imu_invalid, ...
+        'IMU caida: la fusion conto muestras invalidas o la estimacion no lo marco');
+    n = n + 1;
+
+    % --- 15) entradas de la fusion: base de tiempo y eje de la IMU --------
+    %   hlc_fusion_inputs es el espejo de pe_fusion_inputs (pipeline.c).
+    f15 = struct('tick_ms', 100, 'acc', [1 2 3], 'gyr', [4 5 6], 'encL', 0, 'encR', 0, ...
+                 'temp', 0, 'imu_ok', true, 'version', 3);
+    a15 = sp.agents;  a15.dt_source = 0;  a15.gyro_yaw_axis = 2;
+    [t0, g0, c0] = hlc_fusion_inputs(f15, 123456, a15);
+    a15.dt_source = 1;  a15.gyro_yaw_axis = 0;
+    [t1, g1, c1] = hlc_fusion_inputs(f15, 2^32 + 5, a15);
+    assert(t0 == 100 && g0 == 6 && isequal(c0, [1 2 3]), 'dt_source 0 / eje z mal resuelto');
+    assert(t1 == 5 && g1 == 4 && isequal(c1, [2 3 1]), 'dt_source 1 / eje x mal resuelto');
+    n = n + 1;
+
     fprintf('OK: %d pruebas superadas.\n', n);
 end
 

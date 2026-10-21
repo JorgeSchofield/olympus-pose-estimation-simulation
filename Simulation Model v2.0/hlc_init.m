@@ -11,6 +11,7 @@ function st = hlc_init(prm)
     st.box_full = false;
     st.box_tick = 0;  st.box_encL = 0;  st.box_encR = 0;
     st.box_gz   = 0;  st.box_acc  = zeros(1,3);  st.box_tsam = 0;
+    st.box_imu_ok = true;
 
     % --- agente de fusion -------------------------------------------------
     st.fst = sep_fusion_init();

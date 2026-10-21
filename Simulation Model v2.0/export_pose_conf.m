@@ -11,6 +11,9 @@ function export_pose_conf(fname)
 %       geo.<campo>   sep_geo_t           (sep_geo_params)
 %       ag.<campo>    sep_agent_params_t  (sim_params().agents)
 %       prm.<campo>   sep_ekf_params_t    (sep_ekf_params)
+%       est.<campo>   entradas de la fusion (sim_params().agents: dt_source,
+%                     gyro_yaw_axis), que el modelo aplica en hlc_fusion_inputs
+%                     y la aplicacion en pe_fusion_inputs
 %
 %   La aplicacion lee este bloque al arrancar; recalibrar es editar el
 %   archivo de parametros del modelo, exportar de nuevo y reiniciar, sin
@@ -35,6 +38,7 @@ function export_pose_conf(fname)
     ak = {'gyro_scale','dt_reject','dcount_reject','loop_ms','reset_window', ...
           'k_reref','n_still','tilt_rollover','t_gap_max'};
     pk = fieldnames(prm).';
+    ek = {'dt_source','gyro_yaw_axis'};
 
     fid = fopen(fname, 'w');
     assert(fid > 0, 'no se pudo abrir %s', fname);
@@ -49,6 +53,7 @@ function export_pose_conf(fname)
     local_block(fid, 'geo', geo, gk, p.status);
     local_block(fid, 'ag',  ag,  ak, p.status);
     local_block(fid, 'prm', prm, pk, p.status);
+    local_block(fid, 'est', ag,  ek, p.status);
 
     fprintf('Parametros exportados a %s\n', fname);
 end

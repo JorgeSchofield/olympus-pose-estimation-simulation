@@ -113,10 +113,13 @@ function s = sim_params()
     %   'periodic' : despierta cada est_period (como en el modelo 2.0 y en
     %                el cuadro 3.7 de la tesis).
     %   'event'    : despierta al llegar un mensaje al buzon 2 (DESIGN.md,
-    %                decision D3). Es lo que hara la aplicacion CMAES.
+    %                decision D3). Es lo que HACE la aplicacion CMAES, y por
+    %                eso es el valor por omision desde 2026-10-21: el modelo
+    %                y la aplicacion estiman de la misma manera. 'periodic'
+    %                queda solo para reproducir el cuadro 3.7 de la tesis.
     % Misma regla que mbox_policy: la cadena en una LOCAL, la bandera
     % numerica es lo que lee hlc_step.
-    est_policy = 'periodic';            % 'periodic' | 'event'
+    est_policy = 'event';               % 'event' (aplicacion) | 'periodic'
     if strcmpi(est_policy, 'event'), est_mode = 1; else, est_mode = 0; end
     s.agents.est_policy = est_policy;
     s.agents.est_mode   = est_mode;
@@ -140,6 +143,14 @@ function s = sim_params()
                                      % (1 = como el modelo 2.0; subir si el
                                      % rebote del Hall da cuentas en reposo)
     s.agents.tilt_rollover = deg2rad(30);  % [rad] umbral de vuelco
+    % --- entradas de la fusion (hlc_fusion_inputs = pe_fusion_inputs) -----
+    % Se exportan a pose.conf como est.dt_source y est.gyro_yaw_axis, de
+    % modo que el modelo y la aplicacion usan los mismos valores.
+    s.agents.dt_source     = 0;      % base de tiempo: 0 tick del LLC (tesis
+                                     % 3.2.4), 1 llegada al HLC. Con el
+                                     % firmware actual (reloj por software,
+                                     % k ~ 1.87) las pruebas en vivo usan 1
+    s.agents.gyro_yaw_axis = 2;      % eje de la IMU hacia arriba: 0 x, 1 y, 2 z
     % --- agente de estimacion ---------------------------------------------
     s.agents.t_gap_max     = 10.0;   % [s] hueco mayor: re-referenciar
     % --- solo pruebas ------------------------------------------------------
