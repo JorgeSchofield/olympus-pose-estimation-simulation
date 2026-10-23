@@ -16,10 +16,20 @@ function test_sep_model()
     % --- 1) constante por lado: NO es la de una rueda -------------------
     %   Es 1/sum_i(N_i/(2*pi*R_i)), aproximadamente un TERCIO de la de una
     %   rueda. Confundirlas es un error de escala de 3x, no un ajuste fino.
-    mpt_1 = 2*pi*geo.R_wheel(1)/geo.ticks_per_rev(1);
-    razon = mpt_1 / abs(geo.m_per_tick_R);
-    assert(razon > 2.5 && razon < 3.5, ...
-        'la constante por lado deberia ser ~1/3 de la de una rueda');
+    %   Con FR = 2.47 x FL las tres ruedas derechas ya no son parecidas, asi
+    %   que se verifica la definicion: inverso de la suma de cuentas por
+    %   metro, menor que la constante de CUALQUIER rueda del lado.
+    sR = 0;
+    for i = geo.idx_R
+        sR = sR + geo.ticks_per_rev(i)/(2*pi*geo.R_wheel(i));
+        mpt_i = 2*pi*geo.R_wheel(i)/geo.ticks_per_rev(i);
+        assert(mpt_i / abs(geo.m_per_tick_R) > 1.5, ...
+            'la constante por lado no puede ser la de una rueda');
+    end
+    assert(abs(abs(geo.m_per_tick_R)*sR - 1) < 1e-12, ...
+        'la constante por lado deberia ser 1/sum_i(N_i/(2 pi R_i))');
+    assert(abs(geo.ticks_per_rev(1) - geo.ratio_FR_FL*geo.ticks_per_rev(2)) < 1e-9, ...
+        'FR debe contar ratio_FR_FL veces lo que cuenta FL');
     n = n + 1;
 
     % --- 2) odometria: recta, giro, signo y reposo ----------------------
@@ -27,8 +37,17 @@ function test_sep_model()
     c = 1000;
     [ds, dth, mov] = sep_odometry(-c, c, geo);
     assert(ds > 0 && abs(dth) < 0.02 && mov == 1, 'recta mal resuelta');
-    [ds2, dth2, ~] = sep_odometry(-c, -c, geo);
-    assert(abs(ds2) < 1e-9, 'giro: ds debe ser ~0');
+    %   Giro en el sitio: cada lado recorre la MISMA distancia en sentidos
+    %   opuestos. Con las constantes medidas los dos lados difieren un 3.7 %,
+    %   asi que cuentas iguales NO dan distancias iguales: se calculan las
+    %   cuentas de cada lado a partir de la distancia. El residuo es de
+    %   cuantizacion, menor que una cuenta.
+    d = c*abs(geo.m_per_tick_R);
+    cR = -round(d/abs(geo.m_per_tick_R));    % derecha adelante (negativo)
+    cL = -round(d/abs(geo.m_per_tick_L));    % izquierda atras
+    [ds2, dth2, ~] = sep_odometry(cR, cL, geo);
+    assert(abs(ds2) < max(abs(geo.m_per_tick_R), abs(geo.m_per_tick_L)), ...
+        'giro: ds debe ser ~0 (menos de una cuenta)');
     assert(dth2 > 0, 'giro: derecha adelante debe dar dth>0 (antihorario)');
     [~, ~, mov0] = sep_odometry(0, 0, geo);
     assert(mov0 == 0, 'reposo: moving debe ser 0');
@@ -71,7 +90,7 @@ function test_sep_model()
            isequal(f.gyr,[100 -100 32767]) && ...
            f.encL == -2147483648 && f.encR == 2147483647, ...
            'roundtrip RAW: campo mal decodificado');
-    assert(buf(1:4) == uint8('RAW:'), 'falta el prefijo');
+    assert(all(buf(1:4) == uint8('RAW:')), 'falta el prefijo');
     assert(buf(nb) == uint8(10), 'la trama debe terminar en salto de linea');
     n = n + 1;
 
@@ -139,8 +158,133 @@ function test_sep_model()
         [stB,~,~,~,~,~] = hlc_step(stB, b{1}{1}, b{1}{2}, true, geo, prm, ag, Tb);
         [stB,~,~,~,~,~] = hlc_step(stB, zeros(1,raw_buf_max(),'uint8'), 0, false, geo, prm, ag, Tb);
     end
-    assert(abs(stA.x(1)-stB.x(1)) < 1e-9 && abs(stA.x(2)-stB.x(2)) < 1e-9, ...
-        'una trama perdida produjo error PERMANENTE de posicion');
+    %   La trama perdida solo cambia la resolucion temporal: con las
+    %   constantes medidas (3.7 % de asimetria) cada trama lleva un giro
+    %   minimo y el orden de integracion deja ~1e-6 m de diferencia. Perder
+    %   la DISTANCIA de una trama costaria su avance completo (~2.4 mm), asi
+    %   que la cota es el 1 % de ese avance.
+    ds_frame = sep_odometry(-1000, 1000, geo);
+    dpos = hypot(stA.x(1)-stB.x(1), stA.x(2)-stB.x(2));
+    assert(dpos < 0.01*ds_frame, ...
+        'una trama perdida produjo error PERMANENTE de posicion (%.3g m)', dpos);
+    n = n + 1;
+
+    % --- 11) descartes en el buzon 2 NO pierden distancia ---------------
+    %   La regla de los acumuladores aplicada al buzon fusion -> estimacion:
+    %   el mensaje lleva S, TH y OM acumulados, asi que descartar uno solo
+    %   alarga el paso siguiente. Misma recta ideal que el caso 9, con y sin
+    %   un descarte forzado de cada 3 mensajes.
+    pose_end = zeros(2,2);
+    ndrop = 0;
+    for r = 1:2
+        ag = sp2.agents;
+        if r == 2, ag.test_drop_every = 3; end
+        stP = plant_init();  stL = llc_init();
+        stC = channel_init(sp2.chan); stH = hlc_init(prm);
+        for k = 1:N
+            [stP, o] = plant_step(stP, 0.029, 0, zeros(1,6), 0, 0, Tb, sp2.plant);
+            [stL, b, nb, em] = llc_step(stL, o.w, o.a_body, 0, 0, o.arc, ...
+                                        zeros(1,5), lp, geo, imu0, Tb);
+            [stC, cb, cn, ar] = channel_step(stC, b, nb, em, [1 1 0], sp2.chan, Tb);
+            [stH, ~, ~, ~, ~, ~] = hlc_step(stH, cb, cn, ar, geo, prm, ag, Tb);
+        end
+        pose_end(r,:) = stH.x(1:2).';
+        if r == 2, ndrop = stH.n_test_drop; end
+    end
+    assert(ndrop > 100, 'el caso 11 no descarto mensajes (%d)', ndrop);
+    dpos = hypot(pose_end(1,1)-pose_end(2,1), pose_end(1,2)-pose_end(2,2));
+    assert(dpos < 1e-3, ...
+        ['descartar 1 de cada 3 mensajes del buzon 2 movio la pose final ' ...
+         '%.2f mm: se esta perdiendo distancia'], 1e3*dpos);
+    n = n + 1;
+
+    % --- 12) trama corrupta: la referencia es la ULTIMA ACEPTADA --------
+    %   (a) corrupta pero creible: entra, y la trama siguiente la deshace
+    %       porque S se recalcula desde acumuladores absolutos.
+    %   (b) implausible: se rechaza, y el avance llega integro con la
+    %       siguiente trama buena (hlc_step re-referenciaba con la trama
+    %       rechazada y perdia distancia).
+    ag = sp.agents;
+    clean = [0 0 0; 20 1000 -1000; 40 2000 -2000; 60 3000 -3000];
+    bad_a = clean;  bad_a(3,2) = 2500;      % 500 cuentas de mas, creible
+    bad_b = clean;  bad_b(3,2) = 900000;    % salto imposible
+    S = zeros(1,3);  nrej = zeros(1,3);
+    seqs = {clean, bad_a, bad_b};
+    for r = 1:3
+        fs = sep_fusion_init();
+        q = seqs{r};
+        for k = 1:size(q,1)
+            [fs, ~, ~] = sep_fusion_step(fs, q(k,1), q(k,2), q(k,3), 0, ...
+                                         [0 0 16384], true, geo, ag);
+        end
+        S(r) = fs.S;  nrej(r) = fs.n_reject;
+    end
+    assert(abs(S(2) - S(1)) < 1e-12, 'trama corrupta creible: S no se recupero');
+    assert(nrej(3) == 1 && abs(S(3) - S(1)) < 1e-12, ...
+        'trama implausible: se perdio distancia o no se rechazo');
+    n = n + 1;
+
+    % --- 13) hueco largo: subpasos, no recorte de dt --------------------
+    %   2 s de arco (0.058 m, 0.2 rad, giroscopio coherente) en un solo
+    %   mensaje. Recortar dt a 0.5 s daria w_enc = 0.4 rad/s contra 0.1 del
+    %   giroscopio: una discrepancia falsa que el detector de deslizamiento
+    %   tomaria por patinaje. Con subpasos la discrepancia es nula.
+    es = sep_estimation_init(prm);
+    o0 = sep_odom_empty();
+    o1 = o0;
+    o1.t_cum = 2000;  o1.S = 0.058;  o1.TH = 0.2;
+    o1.n_g = 100;  o1.OM = 100*0.1;  o1.n_s = 100;
+    [es, ~, ~, d0] = sep_estimation_step(es, o0, prm, ag);
+    [es, xe, dg, d1] = sep_estimation_step(es, o1, prm, ag);
+    assert(~d0 && d1, 'la primera llamada debe solo referenciar');
+    assert(es.gap && es.n_substeps == 4, 'el hueco de 2 s debia ir en 4 subpasos');
+    assert(dg(1) < 1e-9, 'discrepancia giroscopio-odometria falsa: %.3g rad/s', dg(1));
+    assert(abs(hypot(xe(1), xe(2)) - 0.058) < 0.01*0.058, ...
+        'el hueco largo no conservo la distancia');
+    n = n + 1;
+
+    % --- 14) trama v3.0 e IMU caida: misma ruta que la aplicacion ---------
+    %   v3.0 agrega temp e imu_ok. Con imu_ok = 0 la fusion no cuenta la
+    %   muestra de giroscopio y la estimacion marca imu_invalid (modo solo
+    %   odometria), como el agente de la aplicacion con PE_RAW_IMU_VALID.
+    [bv, nv] = raw_frame_bytes(40, [1 2 3], [4 5 6], 7, -8, 3797, 1, 3);
+    [f, ok] = raw_frame_from_bytes(bv, nv);
+    assert(ok && f.version == 3 && f.temp == 3797 && f.imu_ok && f.encR == -8, ...
+        'roundtrip v3.0 mal decodificado');
+    b = uint8('RAW:1:2:3:4:5:6:7:8:9:10:2');      % imu_ok fuera de rango
+    [~, o1] = raw_frame_from_bytes(b, numel(b));
+    b = uint8('RAW:1:+2:3:4:5:6:7:8:9');          % '+' no se acepta
+    [~, o2] = raw_frame_from_bytes(b, numel(b));
+    b = uint8('RAW:1:2:3:4:5:6:7:8:9 ');          % nada despues del ultimo campo
+    [~, o3] = raw_frame_from_bytes(b, numel(b));
+    assert(~o1 && ~o2 && ~o3, 'el parser del modelo debe rechazar lo que rechaza pe_raw_parse');
+    ag14 = sp.agents;
+    stI = hlc_init(prm);
+    for k = 0:40
+        ok_k = k < 20;                             % la IMU cae en la trama 20
+        if ok_k
+            [bk, nk] = raw_frame_bytes(20*k, [0 0 16384], [0 0 0], 100*k, -100*k, 3797, 1, 3);
+        else
+            [bk, nk] = raw_frame_bytes(20*k, [0 0 0], [0 0 0], 100*k, -100*k, 0, 0, 3);
+        end
+        stI.t = 0.020*k;
+        [stI, ~, ~, ~, ~, ~] = hlc_step(stI, bk, nk, true, geo, prm, ag14, Tb);
+    end
+    %   La primera trama solo referencia: 19 muestras validas (tramas 1..19).
+    assert(stI.fst.n_g == 19 && stI.est.imu_invalid, ...
+        'IMU caida: la fusion conto muestras invalidas o la estimacion no lo marco');
+    n = n + 1;
+
+    % --- 15) entradas de la fusion: base de tiempo y eje de la IMU --------
+    %   hlc_fusion_inputs es el espejo de pe_fusion_inputs (pipeline.c).
+    f15 = struct('tick_ms', 100, 'acc', [1 2 3], 'gyr', [4 5 6], 'encL', 0, 'encR', 0, ...
+                 'temp', 0, 'imu_ok', true, 'version', 3);
+    a15 = sp.agents;  a15.dt_source = 0;  a15.gyro_yaw_axis = 2;
+    [t0, g0, c0] = hlc_fusion_inputs(f15, 123456, a15);
+    a15.dt_source = 1;  a15.gyro_yaw_axis = 0;
+    [t1, g1, c1] = hlc_fusion_inputs(f15, 2^32 + 5, a15);
+    assert(t0 == 100 && g0 == 6 && isequal(c0, [1 2 3]), 'dt_source 0 / eje z mal resuelto');
+    assert(t1 == 5 && g1 == 4 && isequal(c1, [2 3 1]), 'dt_source 1 / eje x mal resuelto');
     n = n + 1;
 
     fprintf('OK: %d pruebas superadas.\n', n);

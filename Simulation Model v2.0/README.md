@@ -30,8 +30,10 @@ controller's timing rather than in the filter. The model now spans plant → LLC
 ```matlab
 >> run_sep_full_demo     % whole chain: plant → LLC → link → HLC
 >> run_sep_demo          % estimation agent only, much faster
->> test_sep_model        % 10 unit tests, no toolboxes
+>> test_sep_model        % 15 unit tests, no toolboxes
 >> test_sep_frame        % reproduces the data-contract golden vector
+>> codegen_hlc_core      % C for the HLC agents (needs MATLAB Coder)
+>> export_pose_conf      % parameters for the HLC application
 ```
 
 `run_sep_full_demo` builds and runs the complete Simulink model, then runs the same model as
@@ -61,7 +63,8 @@ llc.clock_mode = 'timer';      % the LLC with a free-running timer
        │               t_real drives the plant, t_llc is what the firmware believes
   serial_channel       USART0 → USB at 115200, RAW ASCII frame, loss, corruption
        │
-  hlc_agents           acquisition → estimation → comms, depth-1 mailboxes
+  hlc_agents           acquisition → fusion → estimation → comms,
+       │               two depth-1 mailboxes (raw accumulators, then cumulative S/TH/OM)
        │
     metrics            accuracy, latency, delivery, rate
 ```
@@ -115,6 +118,21 @@ truth for validation.
 | `sep_ekf_params.m` | Filter tuning. Single tuning point. |
 | `sep_odometry.m` | Two side accumulators → body displacement and heading increment. |
 | `sep_ekf_step.m` | Filter core. One prediction–correction cycle. |
+| `sep_fusion_init.m` / `sep_fusion_step.m` | **Data-fusion agent.** Raw frame → plausibility check against the last *accepted* frame, LLC-reset handling, `sep_odometry`, and **cumulative** distance `S`, heading `TH` and gyro sum `OM`. |
+| `sep_estimation_init.m` / `sep_estimation_step.m` | **Estimation agent.** Differences the cumulative values against what *it* last processed and calls `sep_ekf_step` unchanged. Gaps longer than `dt_max` are split into sub-steps instead of clamped. |
+| `sep_odom_empty.m` | The fusion → estimation message (mirror of `pe_odom_msg_t` in the HLC design). |
+
+The two agent wrappers are what MATLAB Coder turns into C; `sep_odometry` and `sep_ekf_step`
+go in as internal functions. Six files in all become C (plus the message definition).
+
+### Code generation for the HLC
+
+| File | Role |
+|---|---|
+| `codegen_hlc_core.m` | Generates the C library (`codegen/hlc_core` by default, or a given folder such as the app's `src/core/gen`). C89/C90 output, which compiles as C99; no dynamic memory; ARM 64-bit; named structs (`sep_fusion_state_t`, `sep_odom_t`, …). Parameters are function **arguments**, not folded constants. |
+| `export_pose_conf.m` | Writes the parameters the generated code receives (`geo.*`, `ag.*`, `prm.*`) as `key = value` text with 17 significant digits and each value's status tag. The HLC application reads it at start-up, so recalibrating needs no regeneration. |
+
+`codegen/` is build output and is not tracked.
 
 ### Simulation chain
 
@@ -123,8 +141,10 @@ truth for validation.
 | `plant_step.m` / `plant_init.m` | Ground truth, per wheel, with independent slip ratios. |
 | `llc_step.m` / `llc_init.m` | ATmega2560 loop: sub-task schedule, two clocks, IMU quantization, i32 accumulators, stall detection. |
 | `channel_step.m` / `channel_init.m` | Serial link: frame-level delay, loss, single-byte corruption. |
-| `hlc_step.m` / `hlc_init.m` | Four agents with depth-1 mailboxes. |
-| `raw_frame_bytes.m` / `raw_frame_from_bytes.m` | RAW ASCII frame, byte-exact with the firmware's `write_u32`/`write_i32`. |
+| `hlc_step.m` / `hlc_init.m` | Acquisition, fusion, estimation and communication agents with two depth-1 mailboxes. `ag.est_mode` selects an event-driven (default, as the application) or periodic estimation agent; `ag.test_drop_every` forces mailbox drops for testing. |
+| `hlc_fusion_inputs.m` | Time base (`ag.dt_source`) and IMU axes (`ag.gyro_yaw_axis`) handed to `sep_fusion_step`. Mirror of `pe_fusion_inputs` in the application. |
+| `hlc_replay.m` | Runs a recording (`llcmux` record, converted capture, emulator file) through the same chain as `olympus-pose -r`; one row per published pose. |
+| `raw_frame_bytes.m` / `raw_frame_from_bytes.m` | RAW ASCII frame, byte-exact with the firmware's `write_u32`/`write_i32`; v3.0 (`temp`, `imu_ok`) or v2.20. The parser is the mirror of the application's `pe_raw_parse`. |
 
 ### Parameters, models and tests
 
@@ -141,7 +161,8 @@ truth for validation.
 
 ### Three boundaries worth respecting
 
-**The codegen boundary.** Only the four core files must be codegen-safe. `rover_params.m`
+**The codegen boundary.** Only the core files (the four parameter/filter files plus the
+fusion and estimation wrappers) must be codegen-safe. `rover_params.m`
 uses `fprintf` and `warning`; `rover_params_quiet.m` silences it with `evalc`. Neither can
 live inside a MATLAB Function block, so the Simulink blocks call `sim_params`, `llc_params`,
 `sep_geo_params` and `sep_ekf_params` directly. The LLC emulator models somebody else's
@@ -152,7 +173,8 @@ and receives physical quantities. This mirrors the split between the data-fusion
 the estimation agent in the rover's multi-agent architecture.
 
 **The accumulator boundary.** The acquisition agent deposits **raw accumulators** in the
-mailbox, never increments. See the findings.
+first mailbox, and the fusion agent deposits **cumulative** physical quantities in the
+second, never increments. See the findings.
 
 ---
 
@@ -247,6 +269,15 @@ encR)`, and the consumer differences against what *it* last processed. Overwrite
 temporal resolution, not distance. **General rule: convert to increments in the last link,
 never before a mailbox that can overwrite.** `test_sep_model` case 10 guards this.
 
+The same rule applies to the second mailbox, between fusion and estimation: the fusion agent
+sends cumulative distance `S`, heading `TH` and gyro sum `OM` (linear in the accumulators, so
+no information is lost) and the estimation agent takes the differences. A dropped message only
+lengthens the next step; even the gyro mean and $\omega_{enc}$ stay averaged over the same
+interval. `test_sep_model` case 11 drops one fusion message in three and checks the final pose
+moves less than 1 mm; on the full UMBmark the error goes from 1.06 % to 1.40 %, all of it time
+resolution. Case 12 checks that a corrupted frame cannot cost distance either, case 13 that
+long gaps are sub-stepped rather than clamped.
+
 **The accelerometer cannot detect slip on this rover.** The full braking signature is about
 0.145 m/s², while **one degree of pitch** projects 0.171 m/s² of gravity onto the
 longitudinal axis. A rocker-bogie pitches by degrees continuously, by design. The signal is
@@ -285,6 +316,57 @@ returning to the bench: the campaign measured at 20, 50 and 80 % PWM and `sep_ge
 averages the three. If counts per revolution **rise with speed**, it is bounce. If they are
 flat, the spread is real.
 
+### Front wheels: FR counts 2.47 × FL (2026-10)
+
+When the rover was assembled, the front right wheel was found to count **2.47 times** the
+pulses per revolution of the front left one, a physical difference between the two units.
+`sep_geo_params` now sets `ticks_per_rev(FR) = ratio_FR_FL · ticks_per_rev(FL)` with
+`ratio_FR_FL = 2.47` (the bench value of FR, 43 698, is kept as `ticks_per_rev_banco` for
+reference). Because the LLC sends one count **sum** per side, this only changes the right
+side constant:
+
+| | bench FR | FR = 2.47 × FL |
+|---|---|---|
+| right side, counts per metre | 407 924 | 678 412 |
+| `m_per_tick_R` | −2.451e-6 m | −1.474e-6 m |
+| asymmetry between sides | 3.7 % | ≈ 60 % |
+
+Heading is unaffected (it comes from the gyro); **distance is**: a wrong right-side constant
+by a factor *f* scales the distance by (1 + *f*)/2. The simulated plant and the estimator use
+the same per-wheel model, so the demos do not show this error; `prm.s2_ds_floor` was
+updated to the new mean constant (1.9e-6 m) and `rover_params` excludes FR from the
+bench-anomaly spread.
+
+**Per-side calibration.** `k_cal_R` and `k_cal_L` (default 1, `TBD`) multiply the derived
+constants. They come from straight runs of known length on the real rover, measured by
+`agents/tools/odom_calib.py` in the application repository. The simulated plant keeps the
+per-wheel model, so with `k_cal ≠ 1` the simulation shows the error the calibration
+removes on the rover. After setting them, run `export_pose_conf`.
+
+### Same estimation as the application (2026-10-21)
+
+The simulated HLC and the CMAES application run the same chain, verified by tests in the
+application repository (`agents/tests/test_core.c`, DESIGN.md §9.6):
+
+- **Estimation is event-driven** by default (`est_policy = 'event'`), as in the
+  application. `'periodic'` (20 ms) remains to reproduce thesis Table 3.7.
+- **Frame and parser:** the simulated LLC sends the v3.0 frame and can lose the IMU
+  (`llc.imu_fail_t0/t1`: zeroed inertial fields and `imu_ok = 0`, as the firmware).
+  `raw_frame_from_bytes` applies the rules of `pe_raw_parse`; on 5000 mutated lines both
+  give the same verdict and values.
+- **Fusion inputs:** `imu_ok` from the frame, time base `dt_source` and IMU axis
+  `gyro_yaw_axis` through `hlc_fusion_inputs` (= `pipeline.c`). Both are exported to
+  `pose.conf` (`est.*`), so the model stays the only source of the parameters.
+- **Replay:** `hlc_replay(file)` gives the same poses as `olympus-pose -r file`, at the
+  same input lines (relative difference 1.4e-17 on a 2482-line recording, both time
+  bases).
+
+**Time base and the software clock.** With the simulated LLC clock at 65 % of real time,
+`run_sep_full_demo` ends the UMBmark 45 % off with `dt_source = 0` (LLC tick, the
+default and the thesis rule), and closes to 1.34 % (CW) / 0.50 % (CCW) with
+`dt_source = 1` (HLC arrival time). Use 1 for live tests until the firmware loop is
+timer-driven.
+
 ---
 
 ## Known limitations
@@ -312,7 +394,8 @@ flat, the spread is real.
   missing $1/\cos\theta$ term introduces roughly 3.5 % of systematic heading error.
 - **The RAW frame has no CRC.** A byte corrupted by motor noise produces a *plausible*
   number that no parser can detect. The only defence on this path is plausibility rejection
-  in the estimation agent. `channel_step` can inject corruption to quantify the exposure.
+  in the fusion agent; with cumulative values a corrupted frame that passes is undone by the
+  next good one. `channel_step` can inject corruption to quantify the exposure.
 - **The models are not self-contained.** The Simulink blocks read their inputs from the base
   workspace; the `run_*` scripts generate them.
 
@@ -320,7 +403,8 @@ flat, the spread is real.
 
 ## Contributing notes
 
-The four core files must stay codegen-safe. MATLAB Coder rejects, in particular:
+The core files (including `sep_fusion_*`, `sep_estimation_*` and `sep_odom_empty`) must stay
+codegen-safe; `test_params_contract` scans them for string comparisons. MATLAB Coder rejects, in particular:
 
 - adding a field to a struct after that struct has been read — and reading a field on the
   right-hand side of an expression counts as reading it;
@@ -351,8 +435,10 @@ Space Systems Laboratory (SETEC) — ELANaV project.
 
 Related repositories: `rover-low-level-controller` (Rust `no_std`, ATmega2560) and
 `olympus-hlc-rpi5` (Yocto image and Python bridge for the Raspberry Pi 5). The LLC model in
-this repository tracks firmware v2.20; the dead MPU-6050 driver and the placeholder EKF in
-that repository are future-work scaffolding and are deliberately **not** modelled here.
+this repository tracks firmware v3.0 (MPU-9250 driver, `RAW:` frame with `temp` and
+`imu_ok`, emitted even without IMU; `llc.frame_version = 2` gives the v2.20 frame); the
+placeholder EKF in that repository is future-work scaffolding and is deliberately **not**
+modelled here.
 
 Requirements this model supports: ≥ 50 Hz sensor sampling, ≥ 10 Hz pose output, < 100 ms
 end-to-end latency, ≥ 99 % inter-agent message delivery, ≤ 3 % position error against ground

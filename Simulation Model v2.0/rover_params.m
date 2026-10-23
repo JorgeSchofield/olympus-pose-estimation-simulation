@@ -28,6 +28,8 @@ function p = rover_params()
 %            experimento, no un numero pendiente de medir. Mezclarlo con
 %            TBD infla la cuenta y diluye la senal: el inventario deja de
 %            leerse cuando la mitad de lo que lista no se puede medir.
+%     'DES'  decision de DISENO del software (por ejemplo, activar el agente
+%            de estimacion por evento). Tampoco es una medida pendiente.
 %
 %   Los resultados obtenidos con cualquier parametro en 'TBD' NO son
 %   concluyentes para el indicador de exactitud.
@@ -47,6 +49,8 @@ p.llc = llc_params();
 
 p.status.R_wheel       = 'MED';   % campana 14/09/2026, calibrador
 p.status.ticks_per_rev = 'MED';   % campana 14/09/2026 - ver anomalia abajo
+p.status.ratio_FR_FL   = 'MED';   % FR = 2.47 x FL, hallazgo al armar el rover (2026-10)
+p.status.k_cal         = 'TBD';   % ensayo de recta, agents/tools/odom_calib.py
 p.status.B_nom         = 'MED';   % campana 14/09/2026, cinta metrica
 p.status.chi           = 'TBD';   % ensayo de giro de 360 grados
 p.status.B_eff         = 'DER';
@@ -94,6 +98,14 @@ p.status.jitter_s        = 'PROV';
 p.status.est_period      = 'PROV';
 p.status.est_delay       = 'PROV';
 p.status.com_delay       = 'PROV';
+p.status.est_mode        = 'DES';   % eleccion de diseno (D3), no medida
+p.status.dt_reject       = 'PROV';
+p.status.dcount_reject   = 'PROV';  % depende de la anomalia de cuentas/vuelta
+p.status.reset_window    = 'PROV';
+p.status.k_reref         = 'PROV';
+p.status.n_still         = 'PROV';  % revisar si se confirma el rebote del Hall
+p.status.tilt_rollover   = 'PROV';
+p.status.t_gap_max       = 'PROV';
 
 % =========================================================================
 % 8. INDICADORES DEL PROYECTO
@@ -190,11 +202,15 @@ if c.floor_ratio > 1.5 || c.floor_ratio < 0.67
 end
 
 % --- 4. Anomalia de cuentas por vuelta -----------------------------------
-N = mean(p.geo.ticks_per_rev);
+% FR se excluye: su diferencia con FL (geo.ratio_FR_FL) es fisica y
+% conocida (2026-10), no parte de la anomalia de banco.
+tpr = p.geo.ticks_per_rev(2:6);
+N = mean(tpr);
 R = mean(p.geo.R_wheel);
-disp_N = (max(p.geo.ticks_per_rev)-min(p.geo.ticks_per_rev))/N;
+disp_N = (max(tpr)-min(tpr))/N;
 c.res_um = 2*pi*R/N * 1e6;
-fprintf('  cuentas/vuelta (media) ........ %.0f\n', N);
+fprintf('  FR / FL (diferencia fisica) ... %.2f\n', p.geo.ratio_FR_FL);
+fprintf('  cuentas/vuelta (media sin FR) . %.0f\n', N);
 fprintf('  dispersion entre ruedas ....... %.1f %%\n', 100*disp_N);
 fprintf('  resolucion en la llanta ....... %.1f um\n', c.res_um);
 if c.res_um < 50 || disp_N > 0.05

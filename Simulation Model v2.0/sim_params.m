@@ -109,14 +109,53 @@ function s = sim_params()
     end
     s.agents.mbox_policy  = mbox_policy;
     s.agents.mbox_mode    = mbox_mode;   % 0 descarta nuevo, 1 sobrescribe, 2 bloquea
-    s.agents.est_period = 0.020;  % [s] periodo del agente de estimacion.
-                                  % Si excede el intervalo entre tramas, el
-                                  % buzon de profundidad 1 sobrescribe.
+    % ACTIVACION DEL AGENTE DE ESTIMACION.
+    %   'periodic' : despierta cada est_period (como en el modelo 2.0 y en
+    %                el cuadro 3.7 de la tesis).
+    %   'event'    : despierta al llegar un mensaje al buzon 2 (DESIGN.md,
+    %                decision D3). Es lo que HACE la aplicacion CMAES, y por
+    %                eso es el valor por omision desde 2026-10-21: el modelo
+    %                y la aplicacion estiman de la misma manera. 'periodic'
+    %                queda solo para reproducir el cuadro 3.7 de la tesis.
+    % Misma regla que mbox_policy: la cadena en una LOCAL, la bandera
+    % numerica es lo que lee hlc_step.
+    est_policy = 'event';               % 'event' (aplicacion) | 'periodic'
+    if strcmpi(est_policy, 'event'), est_mode = 1; else, est_mode = 0; end
+    s.agents.est_policy = est_policy;
+    s.agents.est_mode   = est_mode;
+    s.agents.est_period = 0.020;  % [s] periodo del agente de estimacion
+                                  % (solo est_mode = 0). Si excede el
+                                  % intervalo entre mensajes, el buzon 2
+                                  % descarta.
     s.agents.est_delay  = 0.003;  % [s] coste del ciclo del EKF
     s.agents.com_delay  = 0.002;  % [s] empaquetado y publicacion
     s.agents.jitter     = 0.002;  % [s] jitter por agente
-    s.agents.dt_reject  = 0.500;  % [s] dt implausible -> descartar
-    s.agents.dcount_reject = 20000;
+    % --- agente de fusion: plausibilidad y reposo -----------------------
+    % dt_reject subio de 0.5 s a 2.0 s: con mensajes acumulados un hueco de
+    % hasta 2 s trae su distancia EXACTA, y sep_estimation_step lo integra
+    % en subpasos. Por encima se considera tick corrupto.
+    s.agents.dt_reject     = 2.000;  % [s] salto de tick implausible
+    s.agents.dcount_reject = 20000;  % [cuentas por loop_ms] salto implausible
+    s.agents.loop_ms       = lp.LOOP_MS;  % [ms] periodo nominal del LLC
+    s.agents.reset_window  = 1000;   % [cuentas] |acumulador| tras un reinicio
+    s.agents.k_reref       = 3;      % rechazos seguidos -> re-referenciar
+    s.agents.n_still       = 1;      % tramas quietas para declarar reposo
+                                     % (1 = como el modelo 2.0; subir si el
+                                     % rebote del Hall da cuentas en reposo)
+    s.agents.tilt_rollover = deg2rad(30);  % [rad] umbral de vuelco
+    % --- entradas de la fusion (hlc_fusion_inputs = pe_fusion_inputs) -----
+    % Se exportan a pose.conf como est.dt_source y est.gyro_yaw_axis, de
+    % modo que el modelo y la aplicacion usan los mismos valores.
+    s.agents.dt_source     = 0;      % base de tiempo: 0 tick del LLC (tesis
+                                     % 3.2.4), 1 llegada al HLC. Con el
+                                     % firmware actual (reloj por software,
+                                     % k ~ 1.87) las pruebas en vivo usan 1
+    s.agents.gyro_yaw_axis = 2;      % eje de la IMU hacia arriba: 0 x, 1 y, 2 z
+    % --- agente de estimacion ---------------------------------------------
+    s.agents.t_gap_max     = 10.0;   % [s] hueco mayor: re-referenciar
+    % --- solo pruebas ------------------------------------------------------
+    s.agents.test_drop_every = 0;    % >0: descarta 1 de cada N mensajes del
+                                     % buzon 2 (test_sep_model, caso 11)
 
     % --- escenario ------------------------------------------------------
     s.sim.scenario = 'umbmark';   % 'recta' | 'giro' | 'umbmark'

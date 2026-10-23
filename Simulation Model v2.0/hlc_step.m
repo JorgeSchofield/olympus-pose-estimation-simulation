@@ -1,16 +1,27 @@
 function [st, pose, P, diag_out, lat, publish] = hlc_step(st, buf, n, arrived, ...
                                                           geo, prm, ag, Tb, u_jit)
-%HLC_STEP  Un paso base de los cuatro agentes del HLC.
+%HLC_STEP  Un paso base de los agentes del HLC.
 %
 %   [st, pose, P, diag_out, lat, publish] = HLC_STEP(...)
 %
-%   Reproduce la arquitectura multiagente sobre CMAES/pthreads:
+%   Reproduce la arquitectura multiagente sobre CMAES/pthreads
+%   (DESIGN.md, ARQ-PE-003):
 %
 %       adquisicion (por evento, al llegar trama)
-%            |  buzon profundidad 1, SOBRESCRIBE
-%       estimacion  (periodico, ag.est_period)
+%            |  buzon 1, profundidad 1: acumuladores CRUDOS
+%       fusion de datos (por evento)          -> sep_fusion_step
+%            |  buzon 2, profundidad 1: magnitudes ACUMULADAS (S, TH, OM)
+%       estimacion (periodico o por evento, ag.est_mode) -> sep_estimation_step
 %            |
 %       comunicacion (sigue a estimacion)
+%
+%   Los dos buzones aplican la misma politica (ag.mbox_mode). Con fusion por
+%   evento el buzon 1 casi nunca se llena; los descartes aparecen en el
+%   buzon 2 cuando la estimacion es periodica y las tasas se igualan, y la
+%   regla de los acumulados los hace inocuos para la distancia.
+%
+%   ag.test_drop_every > 0 descarta a la fuerza uno de cada N mensajes del
+%   buzon 2 (solo para pruebas: test_sep_model, caso 11).
 %
 %   =====================================================================
 %   POR QUE EL BUZON LLEVA ACUMULADORES Y NO INCREMENTOS
@@ -115,10 +126,13 @@ function [st, pose, P, diag_out, lat, publish] = hlc_step(st, buf, n, arrived, .
             end
 
             if acepta
-                st.box_tick = f.tick_ms;
+                % Mismas entradas que la aplicacion (pe_fusion_inputs): base
+                % de tiempo segun ag.dt_source, eje de guinada configurable
+                % e imu_ok de la trama. st.t es la llegada al HLC.
+                [st.box_tick, st.box_gz, st.box_acc, st.box_imu_ok] = ...
+                    hlc_fusion_inputs(f, floor(st.t*1000), ag);
                 st.box_encL = f.encL;
                 st.box_encR = f.encR;
-                st.box_gz   = f.gyr(3);
                 st.box_tsam = st.t - ag.age_est;  % edad estimada de la muestra
                 st.box_full = true;
             end
@@ -126,60 +140,73 @@ function [st, pose, P, diag_out, lat, publish] = hlc_step(st, buf, n, arrived, .
     end
 
     % =================================================================
-    % AGENTE DE ESTIMACION - periodico. La tasa efectiva del filtro la fija
-    % el agente MAS LENTO, no el mas rapido: si las tramas llegan mas
-    % rapido que este periodo, el buzon sobrescribe.
+    % AGENTE DE FUSION DE DATOS - por evento
     % =================================================================
-    st.wake = st.wake - Tb;
-    if st.wake <= 0
-        st.wake = st.wake + ag.est_period;
-
-        if st.box_full
-            if st.have_ref
-                dt  = mod(st.box_tick - st.ref_tick, 2^32) * 1e-3;
-                dCL = wrap_i32(st.box_encL - st.ref_encL);
-                dCR = wrap_i32(st.box_encR - st.ref_encR);
-
-                % Plausibilidad. La trama ASCII no lleva CRC, de modo que un
-                % byte corrompido da un numero creible: esta es la unica
-                % defensa disponible en esta ruta.
-                % Umbrales del AGENTE, no del filtro: ag.dt_reject y
-                % ag.dcount_reject estaban definidos y se ignoraban, con
-                % prm.dt_max y un 1e6 escritos a mano en su lugar.
-                if dt > 0 && dt <= ag.dt_reject && ...
-                   abs(dCL) < ag.dcount_reject && abs(dCR) < ag.dcount_reject
-                    [ds, dth, moving] = sep_odometry(dCR, dCL, geo);
-                    w_gyro = st.box_gz * ag.gyro_scale;
-                    [st.x, st.P, xe, dg] = sep_ekf_step(st.x, st.P, ds, dth, ...
-                                                        w_gyro, dt, moving, prm);
-                    st.n_updates = st.n_updates + 1;
-                    pose = xe;  P = st.P;  diag_out = dg;
-                    % AGENTE DE COMUNICACION
-                    % ag.jitter: los agentes corren sobre pthreads en Linux
-                    % sin RT-preempt, asi que el despertar no es puntual. El
-                    % jitter entra directo en la latencia extremo a extremo.
-                    lat = st.t - st.box_tsam + ag.est_delay + ag.com_delay ...
-                          + ag.jitter*st.u_jit;
-                    publish = true;
-                else
-                    st.n_implaus = st.n_implaus + 1;
+    % Consume el buzon 1 en cuanto hay mensaje: su coste es despreciable
+    % frente al paso base. Convierte a magnitudes fisicas ACUMULADAS, de modo
+    % que un descarte en el buzon 2 tampoco pierde distancia. Con politica
+    % 'block' y el buzon 2 lleno, fusion espera (el buzon 1 sigue lleno).
+    if st.box_full && ~(ag.mbox_mode == 2 && st.box2_full)
+        [st.fst, odom, emit] = sep_fusion_step(st.fst, st.box_tick, st.box_encL, ...
+                                               st.box_encR, st.box_gz, st.box_acc, ...
+                                               st.box_imu_ok, geo, ag);
+        st.box_full  = false;
+        st.n_implaus = st.fst.n_reject;
+        if emit
+            st.n_odom = st.n_odom + 1;
+            if ag.test_drop_every > 0 && mod(st.n_odom, ag.test_drop_every) == 0
+                st.n_test_drop = st.n_test_drop + 1;   % descarte forzado (prueba)
+            elseif st.box2_full
+                if ag.mbox_mode == 1                   % 'overwrite'
+                    st.box2_odom = odom;
+                    st.box2_tsam = st.box_tsam;
+                    st.n_overwrite2 = st.n_overwrite2 + 1;
+                else                                   % 'discard_new' (CMAES)
+                    st.n_discard2 = st.n_discard2 + 1;
                 end
+            else
+                st.box2_odom = odom;
+                st.box2_tsam = st.box_tsam;
+                st.box2_full = true;
             end
-            st.ref_tick = st.box_tick;
-            st.ref_encL = st.box_encL;
-            st.ref_encR = st.box_encR;
-            st.have_ref = true;
-            st.box_full = false;
+        end
+    end
+
+    % =================================================================
+    % AGENTE DE ESTIMACION - periodico (ag.est_mode = 0) o por evento (1)
+    % =================================================================
+    % Periodico: la tasa efectiva la fija el agente MAS LENTO; si los
+    % mensajes llegan mas rapido que este periodo, el buzon 2 descarta.
+    % Por evento (DESIGN.md, decision D3): consume el buzon 2 en cuanto hay
+    % mensaje, sin el retardo de fase del temporizador.
+    run_est = false;
+    if ag.est_mode == 1
+        run_est = st.box2_full;
+    else
+        st.wake = st.wake - Tb;
+        if st.wake <= 0
+            st.wake = st.wake + ag.est_period;
+            run_est = st.box2_full;
+        end
+    end
+
+    if run_est
+        [st.est, xe, dg, did] = sep_estimation_step(st.est, st.box2_odom, prm, ag);
+        st.box2_full = false;
+        st.x = st.est.x;
+        st.P = st.est.P;
+        if did
+            st.n_updates = st.n_updates + 1;
+            pose = xe;  P = st.P;  diag_out = dg;
+            % AGENTE DE COMUNICACION
+            % ag.jitter: los agentes corren sobre pthreads en Linux sin
+            % RT-preempt, asi que el despertar no es puntual. El jitter entra
+            % directo en la latencia extremo a extremo.
+            lat = st.t - st.box2_tsam + ag.est_delay + ag.com_delay ...
+                  + ag.jitter*st.u_jit;
+            publish = true;
         end
     end
 
     st.t = st.t + Tb;
-end
-
-% =====================================================================
-function v = wrap_i32(v)
-%WRAP_I32  Resta envolvente sobre i32. Sin esto, el paso del acumulador por
-%   2^31 se leeria como un teletransporte de 4.29e9 cuentas.
-%#codegen
-    v = mod(v + 2^31, 2^32) - 2^31;
 end
