@@ -3,6 +3,7 @@ function R = hlc_replay(fname, varargin)
 %
 %   R = HLC_REPLAY(fname)
 %   R = HLC_REPLAY(fname, 'dt_source', 1, 'gyro_yaw_axis', 2, 'csv', 'out.csv')
+%   R = HLC_REPLAY(fname, 'pose_frame', 1)   % ejes de pose.csv con io.pose_frame = 1
 %
 %   fname : grabacion de llcmux (llc_record.txt), salida de
 %           capture_to_replay.py o de llc_emulator.py --out. Lineas
@@ -27,7 +28,11 @@ function R = hlc_replay(fname, varargin)
 %   'dt_source' y 'gyro_yaw_axis' permiten repetir una corrida con otra
 %   base de tiempo o montaje de la IMU sin editar sim_params.
 
-    op = struct('dt_source', [], 'gyro_yaw_axis', [], 'csv', '');
+    % pose_frame: ejes de las columnas x, y de salida, igual que io.pose_frame de la
+    % aplicacion (pe_pose_to_frame): 0 = x adelante, y izquierda (marco del
+    % estimador, tesis 2.1); 1 = x derecha, y adelante (x1 = -y0, y1 = x0). theta
+    % no cambia. Usar el mismo valor que la corrida para comparar con su pose.csv.
+    op = struct('dt_source', [], 'gyro_yaw_axis', [], 'csv', '', 'pose_frame', 0);
     for i = 1:2:numel(varargin)
         op.(varargin{i}) = varargin{i+1};
     end
@@ -75,6 +80,9 @@ function R = hlc_replay(fname, varargin)
         [est, xe, dg, did] = sep_estimation_step(est, odom, prm, ag);
         if ~did, continue; end
         nr = nr + 1;
+        if op.pose_frame == 1
+            xe(1:2) = [-xe(2); xe(1)];               % marco publicado 1 (pe_pose_to_frame)
+        end
         R(nr,:) = [i, double(t_rx_ns), f.tick_ms, t_in, odom.S, xe(:).', dg(:).', ...
                    double(odom.still), double(imu_ok)];
     end
