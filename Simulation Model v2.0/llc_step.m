@@ -158,11 +158,15 @@ function cnt = arc_to_counts(arc, geo)
 %   arrastra de un ciclo al siguiente, que es como se comporta un encoder
 %   fisico y lo que mantiene acotado el error de cuantizacion.
 %#codegen
+    % Los factores de calibracion por lado (geo.k_cal_R/L) se aplican tambien
+    % aqui: el rover real da las cuentas que mide el ensayo de recta, no las
+    % del modelo por rueda de banco. Asi la planta y el estimador usan la
+    % misma escala y la simulacion representa al rover calibrado.
     mpt = zeros(1,6);
     for k = 1:3
         iR = geo.idx_R(k);  iL = geo.idx_L(k);
-        mpt(iR) = geo.sign_R * 2*pi*geo.R_wheel(iR) / geo.ticks_per_rev(iR);
-        mpt(iL) = geo.sign_L * 2*pi*geo.R_wheel(iL) / geo.ticks_per_rev(iL);
+        mpt(iR) = geo.k_cal_R * geo.sign_R * 2*pi*geo.R_wheel(iR) / geo.ticks_per_rev(iR);
+        mpt(iL) = geo.k_cal_L * geo.sign_L * 2*pi*geo.R_wheel(iL) / geo.ticks_per_rev(iL);
     end
     cnt = fix(arc ./ mpt);
     cnt = mod(cnt + 2^31, 2^32) - 2^31;     % los acumuladores son i32
