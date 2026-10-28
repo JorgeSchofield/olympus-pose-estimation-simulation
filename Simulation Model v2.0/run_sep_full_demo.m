@@ -10,6 +10,12 @@
 %  las dos rutas ejecutan el mismo algoritmo: dos implementaciones que
 %  coinciden son evidencia, una sola es solo codigo.
 %
+%  Ensayos: los mismos del OE6 sobre el rover (tesis 1.3.3), en este orden:
+%      recta de 5 m           error de posicion final <= 3 % de la distancia
+%      giro de 360 horario    error de rumbo final <= 3 % del giro (10.8 deg)
+%      UMBmark horario        error de posicion final <= 3 % (24 cm de 8 m)
+%      UMBmark antihorario    idem
+%
 %  Para el contraste que justifica el cambio de firmware:
 %      p.llc.clock_mode = 'software';   % LLC de hoy
 %      p.llc.clock_mode = 'timer';      % LLC propuesto
@@ -23,6 +29,16 @@ rng(p.sim.seed);
 Tb = p.sim.Tb;
 
 %% ============ 1. PERFIL DE COMANDO ============
+% Los cuatro ensayos del OE6, como se hacen sobre el rover.
+%
+% GIROS COMO LOS HACE EL OPERADOR. En un skid-steer el rover gira a w/chi:
+% la resistencia lateral se come parte de la diferencia entre lados
+% (plant_step divide el giro por chi_true). En el rover real el operador
+% gira HASTA QUE el rover apunta donde debe, no un tiempo fijo; aqui se
+% reproduce comandando cada giro chi_true veces mas largo que en un chasis
+% rigido. Asi el cuadrado de UMBmark cierra y el giro es de 360 grados
+% reales. Sin esto, con chi_true = 1.54 cada esquina de 90 salia de ~58.
+%
 % UMBmark COMPLETO: el cuadrado se recorre en los DOS sentidos. No es
 % redundancia. Los dos errores sistematicos de Borenstein y Feng se separan
 % justamente por el contraste entre sentidos: el de diametros desiguales
@@ -32,19 +48,33 @@ Tb = p.sim.Tb;
 % Las pausas NO son cortesia: son lo unico que hace observable el sesgo del
 % giroscopio via ZARU. Un recorrido sin paradas lo deja sin anclar.
 v = p.drive.v_max;  w = p.drive.w_turn;  tp = p.sim.pause_s;
-t_side = p.sim.side/v;  t_turn = (pi/2)/w;
+chi = p.plant.chi_true;               % giro real = comando / chi
+L_recta = 5.0;                        % [m] recta del OE6
+req_rumbo = 0.03 * 360;               % [deg] 3 % del giro de 360 (10.8)
 
-sentidos = {'horario', 'antihorario'};
-signos   = [-1, +1];
-RES = struct('dir',{},'err_pct',{},'dist',{},'her',{},'lat',{},'rate',{});
+ensayos = struct('nombre', {'recta 5 m', 'giro 360 horario', 'UMBmark horario', 'UMBmark antihorario'}, ...
+                 'tipo',   {'recta',     'giro',             'umbmark',         'umbmark'}, ...
+                 'signo',  {0,           -1,                 -1,                +1});
+RES = struct('nombre',{},'tipo',{},'perr_cm',{},'err_pct',{},'dist',{},'her',{}, ...
+             'cumple',{},'lat',{},'rate',{});
 
-for run_i = 1:numel(signos)
+for run_i = 1:numel(ensayos)
+E = ensayos(run_i);
 seg = [0 0 0];  t = tp;
-for i = 1:4
-    seg(end+1,:) = [t v 0];              t = t + t_side; %#ok<SAGROW>
-    seg(end+1,:) = [t 0 0];              t = t + tp;     %#ok<SAGROW>
-    seg(end+1,:) = [t 0 signos(run_i)*w]; t = t + t_turn; %#ok<SAGROW>
-    seg(end+1,:) = [t 0 0];              t = t + tp;     %#ok<SAGROW>
+switch E.tipo
+    case 'recta'
+        seg(end+1,:) = [t v 0];  t = t + L_recta/v;
+        seg(end+1,:) = [t 0 0];  t = t + tp;
+    case 'giro'                       % una vuelta en el sitio
+        seg(end+1,:) = [t 0 E.signo*w];  t = t + 2*pi*chi/w;
+        seg(end+1,:) = [t 0 0];          t = t + tp;
+    case 'umbmark'                    % cuadrado de p.sim.side por lado
+        for i = 1:4
+            seg(end+1,:) = [t v 0];          t = t + p.sim.side/v;      %#ok<SAGROW>
+            seg(end+1,:) = [t 0 0];          t = t + tp;                %#ok<SAGROW>
+            seg(end+1,:) = [t 0 E.signo*w];  t = t + (pi/2)*chi/w;      %#ok<SAGROW>
+            seg(end+1,:) = [t 0 0];          t = t + tp;                %#ok<SAGROW>
+        end
 end
 T_end = t;
 N  = round(T_end/Tb);
@@ -130,14 +160,23 @@ lat = LAT(idx);
 rate = numel(idx)/tt(end);
 deliv = stH.n_updates / max(stC.n_sent,1);
 
-fprintf('\n========== MODELO COMPLETO: LLC + enlace + HLC ==========\n');
+fprintf('\n========== MODELO COMPLETO: LLC + enlace + HLC | %s ==========\n', E.nombre);
 fprintf('  configuracion del LLC ....... reloj %s, TX %s\n', ...
         p.llc.clock_mode, p.llc.tx_mode);
 fprintf('  EXACTITUD\n');
 fprintf('    distancia recorrida ....... %.2f m\n', dist);
-fprintf('    error final ............... %.2f cm = %.2f %%  (req <= %.0f %%)  %s\n', ...
-        100*perr(end), err_pct, p.req.err_max_pct, ok(err_pct <= p.req.err_max_pct));
-fprintf('    error de rumbo final ...... %.2f deg\n', rad2deg(herr(end)));
+if strcmp(E.tipo, 'giro')
+    % en un giro en el sitio el criterio es el RUMBO; la distancia es ~0
+    cumple = rad2deg(herr(end)) <= req_rumbo;
+    fprintf('    error final ............... %.2f cm\n', 100*perr(end));
+    fprintf('    error de rumbo final ...... %.2f deg  (req <= %.1f deg)  %s\n', ...
+            rad2deg(herr(end)), req_rumbo, ok(cumple));
+else
+    cumple = err_pct <= p.req.err_max_pct;
+    fprintf('    error final ............... %.2f cm = %.2f %%  (req <= %.0f %%)  %s\n', ...
+            100*perr(end), err_pct, p.req.err_max_pct, ok(cumple));
+    fprintf('    error de rumbo final ...... %.2f deg\n', rad2deg(herr(end)));
+end
 fprintf('    sesgo giro est/verdadero .. %.5f / %.5f rad/s\n', ...
         XM(idx(end),5), p.imu.gyro_bias_z);
 fprintf('  TEMPORIZACION DEL LLC\n');
@@ -179,8 +218,9 @@ if useSL
 end
 fprintf('=========================================================\n\n');
 
-RES(run_i) = struct('dir', sentidos{run_i}, 'err_pct', err_pct, ...
-    'dist', dist, 'her', rad2deg(herr(end)), 'lat', pct(lat,95), 'rate', rate);
+RES(run_i) = struct('nombre', E.nombre, 'tipo', E.tipo, 'perr_cm', 100*perr(end), ...
+    'err_pct', err_pct, 'dist', dist, 'her', rad2deg(herr(end)), 'cumple', cumple, ...
+    'lat', pct(lat,95), 'rate', rate);
 
 %% ============ 6. GRAFICAS ============
 figure('Color','w','Position',[60 60 1200 760]);
@@ -210,21 +250,29 @@ title('Reloj del LLC contra tiempo real');
 xlabel('t real [s]'); ylabel('[s]'); legend('Location','best');
 
 sgtitle(sprintf('Rover Olympus completo | LLC %s/%s | Tb = %.1f ms | %s', ...
-        p.llc.clock_mode, p.llc.tx_mode, 1000*Tb, sentidos{run_i}));
+        p.llc.clock_mode, p.llc.tx_mode, 1000*Tb, E.nombre));
 
 end % for run_i
 
-%% ============ 7. RESUMEN UMBmark ============
-fprintf('\n================ RESUMEN UMBmark ================\n');
+%% ============ 7. RESUMEN DE LOS ENSAYOS DEL OE6 ============
+fprintf('\n================ RESUMEN OE6 (modelo) ================\n');
 for i = 1:numel(RES)
-    fprintf('  %-14s error %6.2f %% de %.2f m ; rumbo %7.2f deg\n', ...
-            RES(i).dir, RES(i).err_pct, RES(i).dist, RES(i).her);
+    R = RES(i);
+    if strcmp(R.tipo, 'giro')
+        fprintf('  %-20s rumbo %6.2f deg (req <= %.1f deg)          %s\n', ...
+                R.nombre, R.her, req_rumbo, ok(R.cumple));
+    else
+        fprintf('  %-20s error %6.2f cm = %5.2f %% de %.2f m ; rumbo %6.2f deg  %s\n', ...
+                R.nombre, R.perr_cm, R.err_pct, R.dist, R.her, ok(R.cumple));
+    end
 end
-fprintf(['  El contraste entre sentidos separa Ed (diametros desiguales,\n' ...
-         '  cambia de signo) de Eb (ancho de via, no cambia). Ninguno de\n' ...
-         '  los dos mide la ESCALA de distancia: para eso, el ensayo de\n' ...
-         '  recta.\n']);
-fprintf('=================================================\n');
+fprintf(['  UMBmark: el contraste entre sentidos separa Ed (diametros\n' ...
+         '  desiguales, cambia de signo) de Eb (ancho de via, no cambia).\n' ...
+         '  La ESCALA de distancia la mide la recta. En el modelo la planta\n' ...
+         '  y el estimador comparten k_cal, de modo que la escala es exacta\n' ...
+         '  por construccion; en el rover se suma la incertidumbre de la\n' ...
+         '  calibracion (+-3 %% hoy).\n']);
+fprintf('======================================================\n');
 
 
 %% ===================== FUNCIONES LOCALES =====================
