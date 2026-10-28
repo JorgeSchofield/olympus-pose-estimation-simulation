@@ -316,32 +316,35 @@ returning to the bench: the campaign measured at 20, 50 and 80 % PWM and `sep_ge
 averages the three. If counts per revolution **rise with speed**, it is bounce. If they are
 flat, the spread is real.
 
-### Front wheels: FR counts 2.47 × FL (2026-10)
+### Encoder scale and track width: calibrated on the rover (2026-10-27)
 
-When the rover was assembled, the front right wheel was found to count **2.47 times** the
-pulses per revolution of the front left one, a physical difference between the two units.
-`sep_geo_params` now sets `ticks_per_rev(FR) = ratio_FR_FL · ticks_per_rev(FL)` with
-`ratio_FR_FL = 2.47` (the bench value of FR, 43 698, is kept as `ticks_per_rev_banco` for
-reference). Because the LLC sends one count **sum** per side, this only changes the right
-side constant:
+**FR = 2.47 × FL was refuted.** The model applied it from 2026-10-20 (a belief from when the
+rover was assembled). On the rover, two straight runs of 2.020 m and 2.100 m gave equal counts on
+both sides (right/left 1.003 and 1.010), and with the correction the application read 50 % of
+the real distance. `sep_geo_params` is back to the six bench values.
 
-| | bench FR | FR = 2.47 × FL |
+**Per-side calibration.** `k_cal_R` and `k_cal_L` multiply the side constants derived from the
+bench values. They come from straight runs of known length on the rover
+(`agents/tools/odom_calib.py` in the application repository):
+
+| | value | source |
 |---|---|---|
-| right side, counts per metre | 407 924 | 678 412 |
-| `m_per_tick_R` | −2.451e-6 m | −1.474e-6 m |
-| asymmetry between sides | 3.7 % | ≈ 60 % |
+| `m_per_tick_R`, `m_per_tick_L` | −3.9456e-6, 3.9456e-6 m/count | one scale for both sides, least squares over both runs without the gyro term (its heading was corrupted by bias drift over ~8 min runs) |
+| `k_cal_R`, `k_cal_L` | 1.6095, 1.6705 | the same, relative to the bench constants |
+| uncertainty | ≈ ±3 % | the two runs alone give 3.82e-6 and 4.07e-6; to be verified with the OE6 5 m runs |
+| `chi` (filter) | 1.50 | spin of 2026-10-27: B_eff ≈ 0.96 m, chi ≈ 1.54, rounded |
+| `chi_true` (plant) | 1.54 | the same spin |
+| `prm.s2_ds_floor` | (3.9456e-6)²/12 | follows the calibrated constant |
 
-Heading is unaffected (it comes from the gyro); **distance is**: a wrong right-side constant
-by a factor *f* scales the distance by (1 + *f*)/2. The simulated plant and the estimator use
-the same per-wheel model, so the demos do not show this error; `prm.s2_ds_floor` was
-updated to the new mean constant (1.9e-6 m) and `rover_params` excludes FR from the
-bench-anomaly spread.
+The simulated LLC (`llc_step`) applies the same `k_cal` factors when it generates the counts,
+so the plant and the estimator use the same scale and the model represents the calibrated
+rover. Before 2026-10-27 the plant kept the bench per-wheel model, and with `k_cal ≠ 1` the
+simulation would have shown a scale error that the rover no longer has.
 
-**Per-side calibration.** `k_cal_R` and `k_cal_L` (default 1, `TBD`) multiply the derived
-constants. They come from straight runs of known length on the real rover, measured by
-`agents/tools/odom_calib.py` in the application repository. The simulated plant keeps the
-per-wheel model, so with `k_cal ≠ 1` the simulation shows the error the calibration
-removes on the rover. After setting them, run `export_pose_conf`.
+`chi` and the left/right split affect only the encoder heading (slip detection and a weak
+heading measurement). Position uses the mean distance of the two sides and the gyro heading,
+so the scale is what matters for accuracy. After changing any of these values, run
+`export_pose_conf` and regenerate the application's test vectors.
 
 ### Same estimation as the application (2026-10-21)
 

@@ -19,9 +19,9 @@ function prm = sep_ekf_params()
     % es 1/sum_i(N_i/(2 pi R_i)), aproximadamente un TERCIO de la de una
     % rueda. rover_params.m verifica que este valor siga siendo coherente
     % con sep_geo_params y avisa si divergen tras recalibrar.
-    % 1.9e-6 = media de |m_per_tick_R| y |m_per_tick_L| con FR = 2.47 x FL
-    % (sep_geo_params, 2026-10); antes 2.4e-6 con los valores de banco.
-    prm.s2_ds_floor = (1.9e-6)^2 / 12.0;    % [m^2] DER
+    % 3.9456e-6 = |m_per_tick| calibrado en el rover (sep_geo_params,
+    % ensayo de recta 2026-10-27); antes 1.9e-6 (FR = 2.47 x FL, refutado).
+    prm.s2_ds_floor = (3.9456e-6)^2 / 12.0; % [m^2] DER
 
     % Ruido de integracion del rumbo por paso.
     prm.s2_theta = (0.5*pi/180)^2 * 0.020;  % [rad^2] PROV

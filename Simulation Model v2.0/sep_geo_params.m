@@ -101,24 +101,15 @@ function geo = sep_geo_params()
     % la dispersion es real. Mirar los tres numeros antes de promediarlos.
     ticks_per_rev_banco = [43698 54159 42660 42882 50355 44876];   % FR FL CR CL RR RL
 
-    % --- Diferencia fisica entre las ruedas delanteras (2026-10) ----------
-    % Al armar el rover se encontro que la rueda delantera derecha (FR)
-    % cuenta 2.47 veces mas pulsos por vuelta que la delantera izquierda
-    % (FL). El valor de FR de la campana de banco (43 698) queda reemplazado
-    % por 2.47 x FL; las otras cinco ruedas conservan el valor de banco.
-    %
-    % Efecto: el lado derecho pasa a dar ~1.66 veces mas cuentas por metro
-    % que con el valor de banco, y la asimetria entre lados sube de 3.7 % a
-    % ~60 %. Sin esta correccion la distancia del lado derecho se leeria
-    % 1.66 veces mayor y la recta saldria ~33 % mas larga (el giroscopio
-    % corrige el rumbo, no la escala; ver cabecera).
-    %
-    % PENDIENTE: confirmar con el ensayo de recta (calibracion por lado,
-    % agents/tools/odom_calib.py), que mide directamente m_per_tick_R/L y
-    % absorbe tambien cuentas perdidas y el diametro efectivo.
-    ratio_FR_FL = 2.47;
+    % --- FR = 2.47 x FL: hipotesis REFUTADA (2026-10-27) ------------------
+    % Al armar el rover se creyo que la rueda delantera derecha contaba 2.47
+    % veces los pulsos de la izquierda, y el modelo lo aplico (2026-10-20).
+    % El ensayo de recta sobre el rover lo descarta: en cada corrida los dos
+    % lados cuentan lo mismo por metro (cuentas R/L = 1.003 y 1.010), y con
+    % la correccion la aplicacion leia el 50 % de la distancia real. Se
+    % vuelve a los valores de banco de las seis ruedas; la escala la fija la
+    % calibracion por lado (k_cal_R, k_cal_L, abajo).
     ticks_per_rev = ticks_per_rev_banco;
-    ticks_per_rev(1) = ratio_FR_FL * ticks_per_rev_banco(2);
 
     % --- Indices de lado --------------------------------------------------
     % Orden normativo del contrato 3.3: FR FL CR CL RR RL. LOS LADOS NO SON
@@ -150,12 +141,20 @@ function geo = sep_geo_params()
     % Corrigen la constante derivada de las mediciones por rueda con lo que
     % mide el rover completo en una recta de longitud conocida: cuentas
     % perdidas, diametro efectivo bajo carga, error en ticks_per_rev. Los
-    % calcula agents/tools/odom_calib.py (k_R, k_L). 1.0 = sin calibrar.
-    % La planta simulada (llc_step) sigue usando el modelo por rueda, de
-    % modo que con k distinto de 1 la simulacion muestra el error que la
-    % calibracion corrige en el rover real.
-    k_cal_R = 1.00;                     % TBD - ensayo de recta
-    k_cal_L = 1.00;                     % TBD - ensayo de recta
+    % calcula agents/tools/odom_calib.py. 1.0 = sin calibrar.
+    %
+    % Ensayo del 2026-10-27: dos rectas de 2.020 y 2.100 m, cuentas
+    % R -529315 / L 527827 y R -518242 / L 513021. Se toma UNA escala para los
+    % dos lados (los lados cuentan igual): 3.9456e-6 m/cuenta, ajuste por
+    % minimos cuadrados sin el termino del giroscopio (su rumbo estaba
+    % contaminado por la deriva del sesgo). Incertidumbre ~ +-3 %: las dos
+    % corridas solas dan 3.82e-6 y 4.07e-6. Pendiente: verificar con las
+    % rectas de 5 m del OE6 (V-OE6-1) y refinar si hace falta.
+    %
+    % La planta simulada (llc_step) aplica los mismos factores al generar las
+    % cuentas, de modo que el modelo representa al rover calibrado.
+    k_cal_R = 1.6095;                   % PROV - ensayo de recta 2026-10-27
+    k_cal_L = 1.6705;                   % PROV - ensayo de recta 2026-10-27
 
     m_per_tick_R = k_cal_R * sign_R / sum_R;   % [m/cuenta] lleva el signo del lado
     m_per_tick_L = k_cal_L * sign_L / sum_L;
@@ -175,7 +174,11 @@ function geo = sep_geo_params()
 
     % Ancho de via EFECTIVO del modelo skid-steer. chi = B_eff/B_nom se
     % identifica con un ensayo de giro, no con mediciones estaticas.
-    chi   = 1.00;                             % TBD - Anexo B.2.6
+    % Giro del 2026-10-27 (1 vuelta horaria, con las constantes de arriba):
+    % B_eff ~ 0.96 m, chi ~ 1.54; giro con interrupciones, se redondea a 1.5.
+    % Solo afecta al rumbo por encoders (deteccion de deslizamiento), no a
+    % la posicion, que usa la distancia media y el rumbo del giroscopio.
+    chi   = 1.50;                             % PROV - giro 2026-10-27
     B_eff = chi * B_nom;
 
     % --- Umbral de reposo -------------------------------------------------
@@ -190,7 +193,6 @@ function geo = sep_geo_params()
     % --- Armado del struct: solo asignaciones, ninguna lectura -------------
     geo.R_wheel       = R_wheel;
     geo.ticks_per_rev = ticks_per_rev;
-    geo.ratio_FR_FL   = ratio_FR_FL;
     geo.k_cal_R       = k_cal_R;
     geo.k_cal_L       = k_cal_L;
     geo.idx_R         = idx_R;

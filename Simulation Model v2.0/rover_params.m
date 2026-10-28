@@ -49,10 +49,9 @@ p.llc = llc_params();
 
 p.status.R_wheel       = 'MED';   % campana 14/09/2026, calibrador
 p.status.ticks_per_rev = 'MED';   % campana 14/09/2026 - ver anomalia abajo
-p.status.ratio_FR_FL   = 'MED';   % FR = 2.47 x FL, hallazgo al armar el rover (2026-10)
-p.status.k_cal         = 'TBD';   % ensayo de recta, agents/tools/odom_calib.py
+p.status.k_cal         = 'PROV';  % ensayo de recta 2026-10-27, +-3 %; verificar con V-OE6-1
 p.status.B_nom         = 'MED';   % campana 14/09/2026, cinta metrica
-p.status.chi           = 'TBD';   % ensayo de giro de 360 grados
+p.status.chi           = 'PROV';  % giro 2026-10-27, chi ~ 1.54 -> 1.50
 p.status.B_eff         = 'DER';
 p.status.m_per_tick    = 'DER';
 p.status.k_rho         = 'PROV';
@@ -87,7 +86,7 @@ p.status.gyro_sf_err     = 'TBD';
 p.status.accel_nd        = 'PROV';
 p.status.dlpf_cfg        = 'TBD';   % decision abierta, ver llc_params
 p.status.half_track      = 'MED';   % campana 14/09/2026 (ext-ext menos 4.5 cm)
-p.status.chi_true        = 'TBD';
+p.status.chi_true        = 'PROV';  % giro 2026-10-27
 p.status.slip_model      = 'SCN';   % que deslizamiento se inyecta es
                                     % una eleccion del ensayo, no un numero
                                     % del rover pendiente de medir
@@ -202,15 +201,12 @@ if c.floor_ratio > 1.5 || c.floor_ratio < 0.67
 end
 
 % --- 4. Anomalia de cuentas por vuelta -----------------------------------
-% FR se excluye: su diferencia con FL (geo.ratio_FR_FL) es fisica y
-% conocida (2026-10), no parte de la anomalia de banco.
-tpr = p.geo.ticks_per_rev(2:6);
+tpr = p.geo.ticks_per_rev;
 N = mean(tpr);
 R = mean(p.geo.R_wheel);
 disp_N = (max(tpr)-min(tpr))/N;
 c.res_um = 2*pi*R/N * 1e6;
-fprintf('  FR / FL (diferencia fisica) ... %.2f\n', p.geo.ratio_FR_FL);
-fprintf('  cuentas/vuelta (media sin FR) . %.0f\n', N);
+fprintf('  cuentas/vuelta (media) ........ %.0f\n', N);
 fprintf('  dispersion entre ruedas ....... %.1f %%\n', 100*disp_N);
 fprintf('  resolucion en la llanta ....... %.1f um\n', c.res_um);
 if c.res_um < 50 || disp_N > 0.05

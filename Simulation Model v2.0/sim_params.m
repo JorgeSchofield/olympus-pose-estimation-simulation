@@ -22,7 +22,10 @@ function s = sim_params()
     % separarlos mucho (chi_true = 1.20 contra chi = 1.00, como estaba)
     % saca al metodo de su rango de validez: el rover giraria 75 grados en
     % vez de 90 y el recorrido no volveria cerca del origen.
-    s.plant.chi_true   = 1.22;                   % [-] chi VERDADERO  TBD
+    % 2026-10-27: el giro sobre el rover da chi ~ 1.54 (B_eff ~ 0.96 m); la
+    % planta usa ese valor y el filtro 1.50 (geo.chi), una diferencia del
+    % ~3 % del mismo tipo que la descrita arriba.
+    s.plant.chi_true   = 1.54;                   % [-] chi VERDADERO  PROV
 
     % Deslizamiento: tres mecanismos separados, cada uno ejercita una parte
     % distinta. Ventanas en [t_ini t_fin] segundos.
