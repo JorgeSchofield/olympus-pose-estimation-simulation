@@ -25,7 +25,7 @@ function s = sim_params()
     % 2026-10-27: el giro sobre el rover da chi ~ 1.54 (B_eff ~ 0.96 m); la
     % planta usa ese valor y el filtro 1.50 (geo.chi), una diferencia del
     % ~3 % del mismo tipo que la descrita arriba.
-    s.plant.chi_true   = 1.54;                   % [-] chi VERDADERO  PROV
+    s.plant.chi_true   = 1.54;                   % [-] chi VERDADERO  MED
 
     % Deslizamiento: tres mecanismos separados, cada uno ejercita una parte
     % distinta. Ventanas en [t_ini t_fin] segundos.
@@ -50,10 +50,26 @@ function s = sim_params()
     s.drive.w_turn = 0.35;      % [rad/s] giro en el sitio
 
     % --- IMU MPU-9250 ---------------------------------------------------
-    s.imu.gyro_bias_z     = 0.012;    % [rad/s]               TBD
-    s.imu.gyro_bias_drift = 0.0;      % [rad/s^2] deriva      TBD
-    s.imu.gyro_arw        = 0.01;     % [deg/s/sqrt(Hz)]
-    s.imu.gyro_sf_err     = 0.00;     % [-]                   TBD
+    % 2026-11-20, valores medidos en el rover:
+    %   gyro_bias_z: desfase crudo del eje z en reposo en la unica grabacion
+    %     cruda (llc_record del 2026-10-28): 65-68 LSB = 0,51 deg/s; el
+    %     estimador lo estimo en 0,0090 rad/s en esa misma corrida. Cambia
+    %     entre encendidos: en las tres corridas del OE6 el sesgo estimado
+    %     fue de -0,0023 a -0,0006 rad/s. El ZARU lo estima en la primera
+    %     pausa, asi que el valor exacto pesa poco en los resultados.
+    %     (Antes 0,012 rad/s en el modelo de diseno y 0,0045 rad/s.)
+    %   gyro_bias_drift: entre el inicio y el final de cada prueba del OE6
+    %     el sesgo estimado cambio menos de 0,0002 rad/s en hasta 26 min.
+    %   gyro_arw: con el filtro de 10 Hz, la desviacion en reposo del eje z
+    %     fue de 0,031-0,036 deg/s; el modelo usa arw*sqrt(dlpf_bw), asi
+    %     que arw = 0,033/sqrt(10) = 0,0104, igual a la hoja de datos.
+    %   gyro_sf_err: los dos giros de 360 deg quedan cortos (-2,2 %), pero
+    %     la causa no esta establecida; solo el nivel ajustado de
+    %     run_sep_oe6_compare la aplica. Sigue pendiente.
+    s.imu.gyro_bias_z     = 0.0090;   % [rad/s]               MED (cambia por encendido)
+    s.imu.gyro_bias_drift = 0.0;      % [rad/s^2] deriva      MED (despreciable)
+    s.imu.gyro_arw        = 0.01;     % [deg/s/sqrt(Hz)]      MED (0,033 deg/s a 10 Hz)
+    s.imu.gyro_sf_err     = 0.00;     % [-]                   TBD (giros: -2,2 %, causa abierta)
     s.imu.accel_nd        = 2.94e-3;  % [m/s^2/sqrt(Hz)]
 
     % --- canal serial (USART0 -> USB, 115200 8N1) -----------------------
@@ -61,8 +77,10 @@ function s = sim_params()
     % unica es llc_params (que conoce el baudrate). Copiarlo a mano
     % permitiria que baud y byte_s se desincronizaran en silencio.
     s.chan.byte_s    = lp.byte_s;   % [s] tiempo de un byte, 8N1
-    s.chan.p_loss    = 0.005;   % [-] perdida de trama (indicador admite 1 %)
-    s.chan.p_corrupt = 0.000;   % [-] byte alterado. SIN CRC en la trama ASCII
+    % Medido en las tres corridas del OE6 (248 150 tramas): ningun hueco de
+    % secuencia y una trama rechazada por sintaxis. Antes 0,005 (supuesto).
+    s.chan.p_loss    = 0.000;   % [-] perdida de trama          MED
+    s.chan.p_corrupt = 0.000;   % [-] byte alterado (1 en 248 150) MED
     s.chan.poll_s    = 0.005;   % [s] sondeo del hilo de adquisicion
     s.chan.jitter_s  = 0.002;   % [s] jitter de planificacion de Linux
     s.chan.max_inflight = 16;   % tramas simultaneas en vuelo (ring del canal)
@@ -143,16 +161,23 @@ function s = sim_params()
     s.agents.reset_window  = 1000;   % [cuentas] |acumulador| tras un reinicio
     s.agents.k_reref       = 3;      % rechazos seguidos -> re-referenciar
     s.agents.n_still       = 1;      % tramas quietas para declarar reposo
-                                     % (1 = como el modelo 2.0; subir si el
-                                     % rebote del Hall da cuentas en reposo)
+                                     % (1 = como corrio en el rover). En los
+                                     % registros del OE6 hubo reposos con
+                                     % el giroscopio en movimiento (chasis que
+                                     % se asienta o se manipula en las
+                                     % pausas): el ZARU desvia el sesgo hasta
+                                     % 0,11 rad/s por algunos segundos.
+                                     % Revisar junto con una compuerta por
+                                     % magnitud del giroscopio.
     s.agents.tilt_rollover = deg2rad(30);  % [rad] umbral de vuelco
     % --- entradas de la fusion (hlc_fusion_inputs = pe_fusion_inputs) -----
     % Se exportan a pose.conf como est.dt_source y est.gyro_yaw_axis, de
     % modo que el modelo y la aplicacion usan los mismos valores.
-    s.agents.dt_source     = 0;      % base de tiempo: 0 tick del LLC (tesis
-                                     % 3.2.4), 1 llegada al HLC. Con el
-                                     % firmware actual (reloj por software,
-                                     % k ~ 1.87) las pruebas en vivo usan 1
+    s.agents.dt_source     = 0;      % base de tiempo: 0 tick del LLC, 1
+                                     % llegada al HLC. Con el firmware v3.0
+                                     % por temporizador (k = 1,0024) el rover
+                                     % corrio con 0; el rumbo integrado queda
+                                     % 0,24 % corto (llc.clock_ppm).
     s.agents.gyro_yaw_axis = 2;      % eje de la IMU hacia arriba: 0 x, 1 y, 2 z
     % --- agente de estimacion ---------------------------------------------
     s.agents.t_gap_max     = 10.0;   % [s] hueco mayor: re-referenciar

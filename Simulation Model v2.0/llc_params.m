@@ -56,8 +56,10 @@ function llc = llc_params()
 
     % ---- modos --------------------------------------------------------
     % Igual que baud: primero locales, el struct se rellena desde ellas.
-    clock_mode     = 'software';   % 'software' (real hoy) | 'timer'
-    tx_mode        = 'blocking';   % 'blocking'  (real hoy) | 'interrupt'
+    % Firmware v3.0 del rover: temporizador y transmision bloqueante, con
+    % las tareas lentas desfasadas. 'software' reproduce el firmware 2.20.
+    clock_mode     = 'timer';      % 'software' (v2.20) | 'timer' (v3.0)
+    tx_mode        = 'blocking';   % 'blocking' (v2.20 y v3.0) | 'interrupt'
     llc.clock_mode = clock_mode;
     llc.tx_mode    = tx_mode;
     llc.emit_raw   = true;         % trama RAW cada ciclo (ruta a MATLAB)
@@ -74,8 +76,8 @@ function llc = llc_params()
     baud           = 115200;       % USART0 -> USB. NO son 500 000.
     llc.baud       = baud;
     llc.byte_s     = 10/baud;      % 8N1: 10 bits por byte
-    llc.raw_bytes  = 80;           % trama RAW tipica, ASCII
-    llc.tlm_bytes  = 185;          % TLM extendida, ASCII
+    llc.raw_bytes  = 90;           % trama RAW v3.0, maximo (antes 80)
+    llc.tlm_bytes  = 100;          % TLM extendida, ASCII (antes 185)
 
     % ---- costes de subtarea [s] (ESTIMADOS - medir con GPIO) ----------
     llc.c_imu      = 2.0e-3;       % una rafaga de 14 B por I2C software
@@ -90,13 +92,16 @@ function llc = llc_params()
     % stall, separados por todo el bloque de proximidad. Ese desfase viaja
     % en la misma trama como si fuera simultaneo.
     llc.off_imu    = 1.0e-3;       % desde el inicio del ciclo
-    llc.off_enc    = 6.0e-3;
+    llc.off_enc    = 1.0e-3;       % firmware v3.0 (en v2.20 eran 6 ms)
 
     % ---- reloj --------------------------------------------------------
     % Aunque se instale un timer, el cristal tiene error. El ATmega2560 de
     % un Arduino Mega usa resonador ceramico o cristal segun la variante;
     % el primero llega a +-0.5 %. Medible con el mismo ensayo de arriba.
-    llc.clock_ppm  = 0;            % TBD - error de base de tiempo [ppm]
+    % Medido en el rover con el firmware por temporizador: el tiempo real
+    % es 1,0024 veces el declarado (regresion t_HLC frente a t_LLC, 334 060
+    % tramas). El contador avanza t_real/(1 + ppm*1e-6).
+    llc.clock_ppm  = 2400;         % MED - error de base de tiempo [ppm]
 
     % ---- IMU: MPU-9250 ------------------------------------------------
     % Mismo mapa de registros que el MPU-6050 para la rafaga 0x3B-0x48 y
@@ -121,11 +126,10 @@ function llc = llc_params()
     % Nyquist esta en 25 Hz, de modo que un ancho de banda de ~41 Hz ALIASA
     % justo en la banda donde vibran los motores. Bajar a ~20 Hz cuesta
     % ~10 ms de retardo de grupo, un 10 % del presupuesto de latencia.
-    % Es una decision abierta que este modelo puede responder.
-    % VERIFICAR la tabla contra el register map antes de citarla.
-    llc.dlpf_cfg   = 3;            % TBD
-    llc.dlpf_bw    = 41;           % [Hz]  segun dlpf_cfg
-    llc.dlpf_delay = 5.9e-3;       % [s]   retardo de grupo segun dlpf_cfg
+    % El firmware v3.0 usa CONFIG = 5 (~10 Hz). Antes 3 (~41 Hz).
+    llc.dlpf_cfg   = 5;            % firmware v3.0
+    llc.dlpf_bw    = 10;           % [Hz]  segun dlpf_cfg
+    llc.dlpf_delay = 17.85e-3;     % [s]   retardo de grupo segun dlpf_cfg
 
     % ---- encoders -----------------------------------------------------
     % QuadratureEncoder::on_edge, disparada en CUALQUIER flanco del canal A

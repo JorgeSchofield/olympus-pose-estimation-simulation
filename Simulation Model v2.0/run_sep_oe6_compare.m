@@ -81,6 +81,7 @@ function T = run_sep_oe6_compare(N)
     end
 
     res = zeros(n, 1);
+    pos = zeros(n, 4);   % frente al final: [Xe Ye Xv Yv], X derecha, Y adelante [m]
     fprintf('OE6 modelo contra rover: %d corridas (%d ensayos, 2 niveles, N = %d)\n', n, ne, N);
     t0 = tic;
     parfor i = 1:n
@@ -93,8 +94,9 @@ function T = run_sep_oe6_compare(N)
             if signo < 0, lados = lados_cw; else, lados = lados_ccw; end
         end
         if strcmp(tipo, 'recta'), lados = ensayos{e,4}; end
-        [perr, herr] = una_corrida(p, cfg, tipo, signo, lados, p.sim.seed + 1000*e + s);
+        [perr, herr, fin] = una_corrida(p, cfg, tipo, signo, lados, p.sim.seed + 1000*e + s);
         if strcmp(tipo, 'giro'), res(i) = herr; else, res(i) = perr; end
+        pos(i,:) = fin;
     end
     fprintf('Terminado en %.1f min\n\n', toc(t0)/60);
 
@@ -124,9 +126,36 @@ function T = run_sep_oe6_compare(N)
         fprintf('%-20s %8.2f %8.2f +- %5.2f %9.2f +- %5.2f %7.2f  %s, %s\n', nombre{e}, Rover(e), ...
                 MedI(e), SdI(e), MedA(e), SdA(e), Z(e), papel{e}, dentro);
     end
+
+    % --- diferencia vectorial (revision del borrador, item 2.7) ---------
+    % Vector de error = posicion estimada menos verdadera del frente, al
+    % final. Se compara el del rover (cinta) con la media del modelo.
+    roverE = struct('recta', [-0.803 4.969; -0.70 5.00], ...
+                    'umbCW', [0.295 -0.206; 0.275 -0.322], ...
+                    'umbCCW', [0.009 0.081; -0.047 -0.020]);   % [estimado; cinta]
+    fprintf('\nDiferencia vectorial del error final (cm): rover frente a la media del modelo\n');
+    for e = [1 4 5]
+        k = ensayos{e,1};
+        er = 100*(roverE.(k)(1,:) - roverE.(k)(2,:));
+        for nivel = 1:2
+            sel = tareas(:,1) == nivel & tareas(:,2) == e;
+            em = 100*mean(pos(sel,1:2) - pos(sel,3:4), 1);
+            sd = 100*std(pos(sel,1:2) - pos(sel,3:4), 0, 1);
+            fv = mean(pos(sel,3:4), 1);
+            fprintf('%-8s %-8s rover (%+6.1f, %+6.1f)  modelo (%+6.1f +- %4.1f, %+6.1f +- %4.1f)  |dif| %5.1f cm; final verdadero modelo (%.3f, %.3f) m\n', ...
+                    k, ifelse(nivel == 1, 'ideal', 'ajustado'), er(1), er(2), em(1), sd(1), em(2), sd(2), ...
+                    norm(er - em), fv(1), fv(2));
+        end
+    end
+    save(fullfile(fileparts(mfilename('fullpath')), 'oe6_compare_result.mat'), ...
+         'T', 'res', 'pos', 'tareas', 'ensayos', 'aj', 'id', 'N');
 end
 
-function [perr_cm, herr_deg] = una_corrida(p, cfg, tipo, signo, lados, semilla)
+function s = ifelse(c, a, b)
+    if c, s = a; else, s = b; end
+end
+
+function [perr_cm, herr_deg, fin] = una_corrida(p, cfg, tipo, signo, lados, semilla)
 %UNA_CORRIDA  Un ensayo con una semilla. Devuelve el error final en el frente.
     Tb  = p.sim.Tb;
     tp  = p.sim.pause_s;
@@ -209,6 +238,8 @@ function [perr_cm, herr_deg] = una_corrida(p, cfg, tipo, signo, lados, semilla)
     ft = [tru(1) + Lf*cos(tru(3)), tru(2) + Lf*sin(tru(3))];
     perr_cm  = 100 * hypot(fe(1)-ft(1), fe(2)-ft(2));
     herr_deg = rad2deg(abs(mod(est(3)-tru(3) + pi, 2*pi) - pi));
+    % marco de la cinta: X a la derecha, Y adelante, relativo al frente inicial
+    fin = [-fe(2), fe(1) - Lf, -ft(2), ft(1) - Lf];
 end
 
 function [seg, t] = tramo(seg, t, v, w, dur, tp)
