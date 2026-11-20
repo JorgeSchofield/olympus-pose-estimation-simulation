@@ -153,8 +153,8 @@ function geo = sep_geo_params()
     %
     % La planta simulada (llc_step) aplica los mismos factores al generar las
     % cuentas, de modo que el modelo representa al rover calibrado.
-    k_cal_R = 1.6095;                   % PROV - ensayo de recta 2026-10-27
-    k_cal_L = 1.6705;                   % PROV - ensayo de recta 2026-10-27
+    k_cal_R = 1.6095;                   % MED - rectas de calibracion, +-3 %
+    k_cal_L = 1.6705;                   % MED - rectas de calibracion, +-3 %
 
     m_per_tick_R = k_cal_R * sign_R / sum_R;   % [m/cuenta] lleva el signo del lado
     m_per_tick_L = k_cal_L * sign_L / sum_L;
@@ -178,7 +178,7 @@ function geo = sep_geo_params()
     % B_eff ~ 0.96 m, chi ~ 1.54; giro con interrupciones, se redondea a 1.5.
     % Solo afecta al rumbo por encoders (deteccion de deslizamiento), no a
     % la posicion, que usa la distancia media y el rumbo del giroscopio.
-    chi   = 1.50;                             % PROV - giro 2026-10-27
+    chi   = 1.50;                             % MED - giro en el sitio (~1,54)
     B_eff = chi * B_nom;
 
     % --- Umbral de reposo -------------------------------------------------

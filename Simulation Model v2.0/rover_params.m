@@ -34,9 +34,9 @@ function p = rover_params()
 %   Los resultados obtenidos con cualquier parametro en 'TBD' NO son
 %   concluyentes para el indicador de exactitud.
 
-p.meta.version = '0.4';
-p.meta.updated = '2026-09-17';
-p.meta.llc_ref = 'rover-low-level-controller @ 5a28ff2 (v2.20)';
+p.meta.version = '0.5';
+p.meta.updated = '2026-11-20';
+p.meta.llc_ref = 'rover-low-level-controller v3.0, ciclo por temporizador (v2.20 @ 5a28ff2 con clock_mode = software)';
 p.meta.hlc_ref = 'olympus-hlc-rpi5 @ 9f0fb42';
 p.status = struct();
 
@@ -48,19 +48,29 @@ p.ekf = sep_ekf_params();
 p.llc = llc_params();
 
 p.status.R_wheel       = 'MED';   % campana 14/09/2026, calibrador
-p.status.ticks_per_rev = 'MED';   % campana 14/09/2026 - ver anomalia abajo
-p.status.k_cal         = 'PROV';  % ensayo de recta 2026-10-27, +-3 %; verificar con V-OE6-1
+p.status.ticks_per_rev = 'MED';   % campana 14/09/2026; no lo usa el estimador. La
+                                  % calibracion implica ~28 300 cuentas por vuelta
+                                  % de rueda (reduccion 670:1 y ~42 cuentas por
+                                  % vuelta de motor), no las ~46 400 del banco
+p.status.k_cal         = 'MED';   % rectas de 2,02 y 2,10 m, +-3 %; recta de 5 m: -0,3 %
 p.status.B_nom         = 'MED';   % campana 14/09/2026, cinta metrica
-p.status.chi           = 'PROV';  % giro 2026-10-27, chi ~ 1.54 -> 1.50
+p.status.chi           = 'MED';   % un giro en el sitio, chi ~ 1,54; el filtro usa 1,50
 p.status.B_eff         = 'DER';
 p.status.m_per_tick    = 'DER';
+% Sintonizacion del filtro: son los valores con los que corrio el rover y se
+% conservan para que el modelo siga siendo el estimador del rover. Los
+% registros del OE6 muestran que son conservadores: NIS medio en movimiento 0,04-0,11
+% (esperado ~1), r_gyro equivale a 0,30 deg/s frente a 0,033 deg/s medidos
+% en reposo, y s2_w_enc (2,0 deg/s) supera la discrepancia real entre
+% odometria y giroscopio (~0,4 deg/s).
 p.status.k_rho         = 'PROV';
 p.status.s2_theta      = 'PROV';
 p.status.s2_w_enc      = 'PROV';
 p.status.s2_bg         = 'PROV';
-p.status.r_gyro        = 'PROV';
+p.status.r_gyro        = 'PROV';  % ruido medido: 0,033 deg/s a 10 Hz
 p.status.r_zaru        = 'PROV';
-p.status.slip_thresh   = 'TBD';   % ensayo de rueda elevada
+p.status.slip_thresh   = 'TBD';   % no calibrado; en el rover solo se supero en reposos
+                                  % con el chasis en movimiento
 p.status.slip_gain     = 'PROV';
 p.status.s2_ds_floor   = 'DER';
 
@@ -77,21 +87,23 @@ p.sim    = sp.sim;
 p.frame  = sp.frame;
 p.agents.gyro_lsb = p.llc.gyro_lsb;
 
-p.status.v_max           = 'PROV';  % campana TRL-4; falta reconfirmar en suelo
+p.status.v_max           = 'PROV';  % campana TRL-4; las pruebas del OE6 se hicieron a
+                                    % 1,65 cm/s y 1,42 deg/s (nivel ajustado)
 p.status.w_turn          = 'PROV';
-p.status.gyro_bias_z     = 'TBD';   % ensayo en reposo, 60 s - PLANIFICADO
-p.status.gyro_bias_drift = 'TBD';   % requiere ensayo termico
-p.status.gyro_arw        = 'PROV';  % hoja de datos; confirmar con Allan
-p.status.gyro_sf_err     = 'TBD';
+p.status.gyro_bias_z     = 'MED';   % grabacion cruda 2026-10-28; cambia por encendido
+p.status.gyro_bias_drift = 'MED';   % < 0,0002 rad/s en cada prueba del OE6
+p.status.gyro_arw        = 'MED';   % 0,033 deg/s en reposo con el filtro de 10 Hz
+p.status.gyro_sf_err     = 'TBD';   % giros: -2,2 %, causa no establecida
 p.status.accel_nd        = 'PROV';
-p.status.dlpf_cfg        = 'TBD';   % decision abierta, ver llc_params
+p.status.dlpf_cfg        = 'MED';   % firmware v3.0: CONFIG = 5 (~10 Hz)
+p.status.clock_ppm       = 'MED';   % alfa_r = 1,0024 medido con el reloj del HLC
 p.status.half_track      = 'MED';   % campana 14/09/2026 (ext-ext menos 4.5 cm)
-p.status.chi_true        = 'PROV';  % giro 2026-10-27
+p.status.chi_true        = 'MED';   % un giro en el sitio (chi ~ 1,54)
 p.status.slip_model      = 'SCN';   % que deslizamiento se inyecta es
                                     % una eleccion del ensayo, no un numero
                                     % del rover pendiente de medir
 p.status.terrain         = 'SCN';   % idem: perfil de cabeceo y alabeo
-p.status.p_loss          = 'TBD';
+p.status.p_loss          = 'MED';   % 0 huecos en 248 150 tramas del OE6
 p.status.poll_s          = 'PROV';
 p.status.jitter_s        = 'PROV';
 p.status.est_period      = 'PROV';
@@ -102,7 +114,8 @@ p.status.dt_reject       = 'PROV';
 p.status.dcount_reject   = 'PROV';  % depende de la anomalia de cuentas/vuelta
 p.status.reset_window    = 'PROV';
 p.status.k_reref         = 'PROV';
-p.status.n_still         = 'PROV';  % revisar si se confirma el rebote del Hall
+p.status.n_still         = 'PROV';  % reposos falsos con el chasis en movimiento
+                                    % en el OE6; ver sim_params
 p.status.tilt_rollover   = 'PROV';
 p.status.t_gap_max       = 'PROV';
 
